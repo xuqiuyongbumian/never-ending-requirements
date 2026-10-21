@@ -30,8 +30,13 @@ export const UNIT_DEFS: readonly UnitDefinition[] = [
 export const WORLD_WIDTH = 1600;
 export const BASE_MAX_HP = 2400;
 export const STARTING_GOLD = 240;
-const GOLD_PER_SECOND = 2.5;
+export const MAX_POPULATION = 24;
+export const MAX_TRAINING_QUEUE = 5;
+const GOLD_PER_SECOND = 4;
 const SIMULATION_STEP = 1 / 30;
+const ALLY_GAP = 46;
+export const BASE_FRONT_EDGES: readonly [number, number] = [368.75, 1231.25];
+const BASE_SPAWN: readonly [number, number] = [245, WORLD_WIDTH - 245];
 
 export interface TrainingOrder {
   unitId: UnitId;
@@ -55,12 +60,12 @@ export interface BattleState {
   phase: BattlePhase;
   elapsed: number;
   gold: [number, number];
+  experience: [number, number];
   baseHp: [number, number];
   units: BattleUnit[];
   queues: [TrainingOrder[], TrainingOrder[]];
   nextUnitId: number;
   aiTimer: number;
-  aiOrder: number;
   accumulator: number;
   paused: boolean;
   speed: 1 | 2;
@@ -81,12 +86,12 @@ export function createBattle(): BattleState {
     phase: "running",
     elapsed: 0,
     gold: [STARTING_GOLD, STARTING_GOLD],
+    experience: [0, 0],
     baseHp: [BASE_MAX_HP, BASE_MAX_HP],
     units: [],
     queues: [[], []],
     nextUnitId: 1,
     aiTimer: 3.5,
-    aiOrder: 0,
     accumulator: 0,
     paused: false,
     speed: 1,
@@ -99,12 +104,16 @@ export function deployUnit(state: BattleState, unitId: UnitId, side: Side = 0): 
   if (state.phase !== "running") return false;
   const definition = getUnitDefinition(unitId);
   const queue = state.queues[side];
-  if (queue.length >= 5) {
+  if (queue.length >= MAX_TRAINING_QUEUE) {
     if (side === 0) setNotice(state, "训练队列已满");
     return false;
   }
+  if (state.units.filter((unit) => unit.side === side).length + queue.length >= MAX_POPULATION) {
+    if (side === 0) setNotice(state, `部队已达上限（${MAX_POPULATION}）`);
+    return false;
+  }
   if (state.gold[side] < definition.cost) {
-    if (side === 0) setNotice(state, "金币不足");
+    if (side === 0) setNotice(state, `金币不足，还差${Math.ceil(definition.cost - state.gold[side])}金`);
     return false;
   }
   state.gold[side] -= definition.cost;
@@ -153,11 +162,26 @@ function advanceTraining(state: BattleState, side: Side, delta: number): void {
     const order = queue.shift()!;
     timeRemaining = -order.remaining;
     const unit = getUnitDefinition(order.unitId);
+    const direction = side === 0 ? -1 : 1;
+    let spawnX: number | undefined;
+    for (let slot = 0; slot < MAX_POPULATION; slot += 1) {
+      const candidate = BASE_SPAWN[side] + direction * ALLY_GAP * slot;
+      if (candidate < 32 || candidate > WORLD_WIDTH - 32) break;
+      if (state.units.every((other) => other.hp <= 0 || Math.abs(other.x - candidate) >= ALLY_GAP)) {
+        spawnX = candidate;
+        break;
+      }
+    }
+    if (spawnX === undefined) {
+      order.remaining = 0;
+      queue.unshift(order);
+      return;
+    }
     state.units.push({
       id: state.nextUnitId++,
       unitId: unit.id,
       side,
-      x: side === 0 ? 145 : WORLD_WIDTH - 145,
+      x: spawnX,
       hp: unit.hp,
       maxHp: unit.hp,
       attackCooldown: 0.25,
@@ -169,16 +193,29 @@ function advanceTraining(state: BattleState, side: Side, delta: number): void {
 
 function decideEnemy(state: BattleState): void {
   if (state.queues[1].length >= 3) return;
-  const preferred: UnitId[] = ["U11", "U12", "U11", "U13", "U14"];
-  const choice = preferred[state.aiOrder % preferred.length];
-  const affordable = state.gold[1] >= getUnitDefinition(choice).cost ? choice : "U11";
-  if (state.gold[1] >= getUnitDefinition(affordable).cost) {
-    deployUnit(state, affordable, 1);
-    state.aiOrder += 1;
-  }
+  const army = [
+    ...state.units.filter((unit) => unit.side === 1).map((unit) => unit.unitId),
+    ...state.queues[1].map((order) => order.unitId)
+  ];
+  const enemyHeavies = state.units.filter((unit) => unit.side === 0 && getUnitDefinition(unit.unitId).heavy).length;
+  const frontline = army.filter((id) => id === "U11" || id === "U14").length;
+  const ranged = army.filter((id) => id === "U12").length;
+  const antiArmor = army.filter((id) => id === "U13").length;
+  const desired = frontline === 0
+    ? "U11"
+    : enemyHeavies > antiArmor
+      ? "U13"
+      : ranged < Math.max(1, Math.ceil(army.length * 0.25))
+        ? "U12"
+        : army.filter((id) => id === "U14").length === 0
+          ? "U14"
+          : frontline < Math.ceil(army.length * 0.4) ? "U11" : "U12";
+  const choice = [desired, "U11", "U12", "U13", "U14"].find((id) => state.gold[1] >= getUnitDefinition(id as UnitId).cost);
+  if (choice) deployUnit(state, choice as UnitId, 1);
 }
 
 function updateUnit(state: BattleState, unit: BattleUnit, delta: number): void {
+  if (unit.hp <= 0) return;
   const definition = getUnitDefinition(unit.unitId);
   unit.attackCooldown = Math.max(0, unit.attackCooldown - delta);
 
@@ -197,7 +234,14 @@ function updateUnit(state: BattleState, unit: BattleUnit, delta: number): void {
   }
 
   const distanceToStop = target ? targetDistance - definition.range : baseDistance - definition.range;
-  if (distanceToStop > 0) unit.x += direction * Math.min(definition.speed * delta, distanceToStop);
+  const allyAhead = state.units
+    .filter((candidate) => candidate.hp > 0 && candidate.side === unit.side && candidate.id !== unit.id)
+    .map((candidate) => (candidate.x - unit.x) * direction)
+    .filter((distance) => distance > 0)
+    .sort((a, b) => a - b)[0];
+  const distanceToAlly = allyAhead === undefined ? Number.POSITIVE_INFINITY : Math.max(0, allyAhead - ALLY_GAP);
+  const movement = Math.min(definition.speed * delta, Math.max(0, distanceToStop), distanceToAlly);
+  if (movement > 0) unit.x += direction * movement;
 }
 
 interface TargetRef {
@@ -228,7 +272,13 @@ function closestEnemyAhead(state: BattleState, source: BattleUnit): TargetRef | 
 
 function attack(state: BattleState, source: BattleUnit, target: TargetRef, definition: UnitDefinition): void {
   if (source.attackCooldown > 0) return;
+  const wasAlive = target.unit!.hp > 0;
   target.unit!.hp = Math.max(0, target.unit!.hp - calculateDamage(definition, target.armor, target.heavy));
+  if (wasAlive && target.unit!.hp === 0) {
+    const bounty = getUnitDefinition(target.unit!.unitId).cost;
+    state.experience[source.side] = Math.min(9999, state.experience[source.side] + Math.max(10, Math.round(bounty * 0.25)));
+    state.gold[source.side] = Math.min(9999, state.gold[source.side] + Math.floor(bounty * 0.35));
+  }
   source.attackCooldown = definition.attackPeriod;
   source.flashUntil = state.elapsed + 0.18;
   source.targetId = target.id;
@@ -248,7 +298,7 @@ function calculateDamage(definition: UnitDefinition, armor: number, heavy: boole
 }
 
 function basePosition(side: Side | number): number {
-  return side === 0 ? 80 : WORLD_WIDTH - 80;
+  return side === 0 ? BASE_FRONT_EDGES[0] : BASE_FRONT_EDGES[1];
 }
 
 function setNotice(state: BattleState, message: string): void {
