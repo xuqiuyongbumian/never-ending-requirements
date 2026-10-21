@@ -7,7 +7,16 @@ import {
   type Engineer,
   type Requirement
 } from "../core/game";
-import { engineerTexture, GAME_ASSETS, GAME_TEXTURES, requestTexture } from "./game-assets";
+import {
+  ENGINEER_ANIMATION_FRAMES,
+  ENGINEER_SPRITE_FRAME_SIZE,
+  engineerAnimationKey,
+  engineerSpriteSheet,
+  GAME_ASSETS,
+  GAME_SPRITESHEETS,
+  GAME_TEXTURES,
+  requestTexture
+} from "./game-assets";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -15,7 +24,7 @@ const FLOOR_Y = 536;
 const REQUEST_Y = [310, 370, 430] as const;
 
 interface EngineerView {
-  image: Phaser.GameObjects.Image;
+  sprite: Phaser.GameObjects.Sprite;
   shadow: Phaser.GameObjects.Graphics;
   aura: Phaser.GameObjects.Graphics;
   activity: Phaser.GameObjects.Text;
@@ -51,12 +60,21 @@ export class BattleScene extends Phaser.Scene {
     for (const asset of GAME_TEXTURES) {
       if (!this.textures.exists(asset.key)) this.load.image(asset.key, asset.src);
     }
+    for (const sheet of Object.values(GAME_SPRITESHEETS)) {
+      if (!this.textures.exists(sheet.key)) {
+        this.load.spritesheet(sheet.key, sheet.src, {
+          frameWidth: ENGINEER_SPRITE_FRAME_SIZE,
+          frameHeight: ENGINEER_SPRITE_FRAME_SIZE
+        });
+      }
+    }
   }
 
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
     this.engineers.clear();
     this.requests.clear();
+    this.createEngineerAnimations();
     const era = this.state?.techEra ?? 0;
     const background = GAME_ASSETS.backgrounds[era] ?? GAME_ASSETS.backgrounds[0];
     this.background = this.add.image(WIDTH / 2, HEIGHT / 2, background.key).setDepth(0);
@@ -71,6 +89,26 @@ export class BattleScene extends Phaser.Scene {
     this.lastHudUpdate = 0;
     this.lastEra = era;
     this.telemetryCursor = 0;
+  }
+
+  private createEngineerAnimations(): void {
+    const roles = Object.keys(GAME_SPRITESHEETS) as Array<keyof typeof GAME_SPRITESHEETS>;
+    for (const role of roles) {
+      const texture = engineerSpriteSheet(role);
+      for (const [action, range] of Object.entries(ENGINEER_ANIMATION_FRAMES) as Array<[
+        keyof typeof ENGINEER_ANIMATION_FRAMES,
+        (typeof ENGINEER_ANIMATION_FRAMES)[keyof typeof ENGINEER_ANIMATION_FRAMES]
+      ]>) {
+        const key = engineerAnimationKey(role, action);
+        if (this.anims.exists(key)) continue;
+        this.anims.create({
+          key,
+          frames: this.anims.generateFrameNumbers(texture, { start: range.start, end: range.end }),
+          frameRate: range.frameRate,
+          repeat: -1
+        });
+      }
+    }
   }
 
   update(_time: number, deltaMs: number): void {
@@ -115,12 +153,12 @@ export class BattleScene extends Phaser.Scene {
       present.add(engineer.id);
       let view = this.engineers.get(engineer.id);
       if (!view) {
-        const image = this.add.image(0, FLOOR_Y, engineerTexture(engineer.role)).setOrigin(0.5, 1).setDepth(5);
+        const sprite = this.add.sprite(0, FLOOR_Y, engineerSpriteSheet(engineer.role), 0).setOrigin(0.5, 1).setDepth(5);
         const maxHeight = engineer.role === "agent" ? 132 : 120;
-        const baseScale = Math.min(maxHeight / image.height, 138 / image.width);
-        image.setScale(baseScale);
+        const baseScale = Math.min(maxHeight / sprite.height, 138 / sprite.width);
+        sprite.setScale(baseScale).play(engineerAnimationKey(engineer.role, "idle"));
         view = {
-          image,
+          sprite,
           shadow: this.add.graphics().setDepth(4),
           aura: this.add.graphics().setDepth(4.5),
           activity: this.add.text(0, 0, "</>", {
@@ -135,7 +173,7 @@ export class BattleScene extends Phaser.Scene {
     }
     for (const [id, view] of this.engineers) {
       if (present.has(id)) continue;
-      view.image.destroy();
+      view.sprite.destroy();
       view.shadow.destroy();
       view.aura.destroy();
       view.activity.destroy();
@@ -145,25 +183,24 @@ export class BattleScene extends Phaser.Scene {
 
   private updateEngineerView(view: EngineerView, engineer: Engineer, state: BattleState): void {
     const definition = getEngineerDefinition(engineer.role);
-    const x = engineer.x / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 34;
+    const x = engineer.x / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
     const moving = engineer.action === "moving";
     const working = engineer.action === "working";
-    const bob = Math.sin(state.elapsed * (moving ? 12 : 6) + engineer.id) * (moving ? 2.8 : 1.3);
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
-    view.image.setPosition(x, FLOOR_Y + bob).setFlipX(target ? target.x < engineer.x : false);
-    view.image.setRotation(moving ? Math.sin(state.elapsed * 10 + engineer.id) * 0.035 : 0);
-    const pulse = working ? 1 + Math.sin(state.elapsed * 8 + engineer.id) * 0.012 : 1 + Math.sin(state.elapsed * 3 + engineer.id) * 0.008;
-    view.image.setScale(view.baseScale * pulse);
+    const action = moving ? "run" : working ? "work" : "idle";
+    const animation = engineerAnimationKey(engineer.role, action);
+    if (view.sprite.anims.currentAnim?.key !== animation) view.sprite.play(animation);
+    const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
+    view.sprite.setPosition(x, FLOOR_Y + hover).setFlipX(target ? target.x < engineer.x : false);
 
     view.shadow.clear().fillStyle(0x1b2929, 0.25).fillEllipse(x, FLOOR_Y - 2, 52, 12);
     view.aura.clear();
     if (engineer.role === "agent") {
-      view.aura.fillStyle(0x66d9fa, 0.13).fillEllipse(x, FLOOR_Y - 48 + bob, 78, 92);
-      view.aura.fillStyle(0x9c9bff, 0.2).fillCircle(x + Math.sin(state.elapsed * 2 + engineer.id) * 25, FLOOR_Y - 85 + bob, 2.5);
+      view.aura.fillStyle(0x66d9fa, 0.13).fillEllipse(x, FLOOR_Y - 48 + hover, 78, 92);
+      view.aura.fillStyle(0x9c9bff, 0.2).fillCircle(x + Math.sin(state.elapsed * 2 + engineer.id) * 25, FLOOR_Y - 85 + hover, 2.5);
     }
-    view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + bob);
-    if (working && engineer.role === "agent") view.activity.setText("AI");
-    else if (working) view.activity.setText("</>");
+    view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover);
+    if (working) view.activity.setText(({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role]);
     view.activity.setColor(engineer.role === "agent" ? "#a9a8ff" : `#${definition.color.toString(16).padStart(6, "0")}`);
   }
 
