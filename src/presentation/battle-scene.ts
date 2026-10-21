@@ -1,99 +1,66 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
-  BASE_MAX_HP,
-  getUnitDefinition,
-  UNIT_DEFS,
+  getEngineerDefinition,
   WORLD_WIDTH,
   type BattleState,
-  type BattleUnit,
-  type Side,
-  type UnitId
+  type Engineer,
+  type EngineerId,
+  type Requirement
 } from "../core/game";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const LANE_Y = 518;
-const BASE_Y = 568;
-const UNIT_FRAME_SIZE: Record<UnitId, number> = { U11: 128, U12: 128, U13: 128, U14: 160 };
-const CLIPS = {
-  idle: { frames: [0, 1, 2, 3, 4, 5], frameRate: 6, repeat: -1 },
-  walk: { frames: [6, 7, 8, 9, 10, 11], frameRate: 10, repeat: -1 },
-  attack: { frames: [12, 13, 14, 15, 16, 17], frameRate: 12, repeat: 0 },
-  hurt: { frames: [18, 19, 20, 21, 22, 23], frameRate: 12, repeat: 0 },
-  death: { frames: [24, 25, 26, 27, 28, 29], frameRate: 9, repeat: 0 }
-} as const;
-type ClipName = keyof typeof CLIPS;
-type BaseCondition = "intact" | "worn" | "critical" | "ruin";
+const FLOOR_Y = 536;
+const UNIT_Y = 487;
+const REQUEST_Y = [310, 360, 410] as const;
 
-interface ActorVisual {
-  sprite: Phaser.GameObjects.Sprite;
-  unitId: UnitId;
-  side: Side;
-  lastX: number;
-  lastHp: number;
-  lastFlashUntil: number;
-  actionUntil: number;
-  action: ClipName;
-  deadAt: number | null;
+interface EngineerView {
+  shape: Phaser.GameObjects.Graphics;
+  role: EngineerId;
+}
+
+interface RequestView {
+  container: Phaser.GameObjects.Container;
+  plate: Phaser.GameObjects.Graphics;
+  title: Phaser.GameObjects.Text;
+  code: Phaser.GameObjects.Text;
+  progress: Phaser.GameObjects.Graphics;
 }
 
 export class BattleScene extends Phaser.Scene {
   private state: BattleState | null = null;
   private lastHudUpdate = 0;
-  private actors = new Map<number, ActorVisual>();
-  private bases!: [Phaser.GameObjects.Image, Phaser.GameObjects.Image];
-  private baseTextureKeys: [string, string] = ["", ""];
-  private shadows!: Phaser.GameObjects.Graphics;
-  private overlays!: Phaser.GameObjects.Graphics;
+  private lastEra = -1;
+  private landscape!: Phaser.GameObjects.Graphics;
+  private lane!: Phaser.GameObjects.Graphics;
+  private engineers = new Map<number, EngineerView>();
+  private requests = new Map<number, RequestView>();
 
   constructor() {
     super({ key: "battle", active: false });
   }
 
-  preload(): void {
-    this.load.image("battle-background", "/assets/environment/backgrounds/A1-battle.webp");
-    this.load.image("base-friendly-intact", "/assets/environment/bases/A1.png");
-    this.load.image("base-enemy-intact", "/assets/environment/bases/A1-enemy.png");
-    this.load.image("base-friendly-worn", "/assets/base/A1-worn.png");
-    this.load.image("base-enemy-worn", "/assets/base/A1-worn-enemy.png");
-    this.load.image("base-friendly-critical", "/assets/base/A1-critical.png");
-    this.load.image("base-enemy-critical", "/assets/base/A1-critical-enemy.png");
-    this.load.image("base-friendly-ruin", "/assets/base/A1-ruin.png");
-    this.load.image("base-enemy-ruin", "/assets/base/A1-ruin-enemy.png");
-    this.load.image("fx-dust", "/assets/fx/dust.png");
-    this.load.image("fx-stone-impact", "/assets/fx/stone_impact.png");
-
-    for (const unit of UNIT_DEFS) {
-      for (const side of [0, 1] as const) {
-        const texture = actorTexture(unit.id, side);
-        const palette = side === 0 ? "" : "-enemy";
-        this.load.spritesheet(texture, `/assets/characters/animations/${unit.id}${palette}.png`, {
-          frameWidth: UNIT_FRAME_SIZE[unit.id],
-          frameHeight: UNIT_FRAME_SIZE[unit.id]
-        });
-      }
-    }
-  }
-
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
-    this.actors.clear();
-    this.createAnimations();
-    this.drawLandscape();
-    this.drawBases();
-    this.shadows = this.add.graphics().setDepth(3);
-    this.overlays = this.add.graphics().setDepth(6);
+    this.engineers.clear();
+    this.requests.clear();
+    this.landscape = this.add.graphics().setDepth(0);
+    this.lane = this.add.graphics().setDepth(1);
+    this.drawLandscape(this.state?.techEra ?? 0);
     this.lastHudUpdate = 0;
+    this.lastEra = this.state?.techEra ?? 0;
   }
 
   update(_time: number, deltaMs: number): void {
     if (!this.state) return;
-
     advanceBattle(this.state, deltaMs / 1000);
-    this.syncActors(this.state);
-    this.updateBases(this.state);
-    this.drawActorOverlays(this.state);
+    if (this.lastEra !== this.state.techEra) {
+      this.lastEra = this.state.techEra;
+      this.drawLandscape(this.lastEra);
+    }
+    this.syncEngineers(this.state);
+    this.syncRequests(this.state);
 
     if (this.time.now - this.lastHudUpdate >= 100) {
       this.lastHudUpdate = this.time.now;
@@ -102,201 +69,220 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private createAnimations(): void {
-    for (const unit of UNIT_DEFS) {
-      for (const side of [0, 1] as const) {
-        const texture = actorTexture(unit.id, side);
-        for (const [name, clip] of Object.entries(CLIPS) as [ClipName, typeof CLIPS[ClipName]][]) {
-          const key = animationKey(unit.id, side, name);
-          if (this.anims.exists(key)) continue;
-          this.anims.create({
-            key,
-            frames: this.anims.generateFrameNumbers(texture, { frames: [...clip.frames] }),
-            frameRate: clip.frameRate,
-            repeat: clip.repeat
-          });
+  private drawLandscape(era: number): void {
+    this.landscape.clear();
+    const sky = [0xb7dfd4, 0xa7d0d2, 0x9eb9d2][era] ?? 0xb7dfd4;
+    const farCity = [0x86b7b0, 0x6e9c9f, 0x6a83a8][era] ?? 0x86b7b0;
+    this.landscape.fillStyle(sky).fillRect(0, 0, WIDTH, HEIGHT);
+    this.landscape.fillStyle(0xd9e9d8).fillRect(0, 282, WIDTH, 112);
+    this.landscape.fillStyle(0xe9dcaa).fillRect(0, FLOOR_Y, WIDTH, HEIGHT - FLOOR_Y);
+
+    this.drawPixelCloud(118, 112);
+    this.drawPixelCloud(388, 180);
+    this.drawPixelCloud(944, 101);
+
+    for (let i = 0; i < 15; i += 1) {
+      const x = i * 92 - 16;
+      const width = 52 + (i % 3) * 12;
+      const height = 64 + (i % 5) * 17;
+      const y = 386 - height;
+      this.landscape.fillStyle(farCity).fillRect(x, y, width, height);
+      this.landscape.fillStyle(0xc9dfcf, 0.72);
+      for (let row = 0; row < Math.floor(height / 18); row += 1) {
+        for (let col = 0; col < Math.floor(width / 17); col += 1) {
+          this.landscape.fillRect(x + 8 + col * 17, y + 9 + row * 18, 6, 7);
         }
       }
     }
-  }
 
-  private drawLandscape(): void {
-    const background = this.add.image(WIDTH / 2, HEIGHT / 2, "battle-background").setDepth(0);
-    background.setScale(Math.max(WIDTH / background.width, HEIGHT / background.height));
-    this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x141b20, 0.08).setDepth(1);
-    this.add.rectangle(WIDTH / 2, LANE_Y + 42, WIDTH, 1, 0xf4d39a, 0.2).setDepth(2);
-  }
+    this.landscape.fillStyle(0x98b96f).fillRect(0, 386, WIDTH, 18);
+    this.landscape.fillStyle(0x658b63).fillRect(0, 404, WIDTH, 9);
+    this.drawFloorGrid();
+    this.drawHeadquarters(158, era);
+    this.drawDeadlineGate(1122);
 
-  private drawBases(): void {
-    this.bases = [
-      this.add.image(150, BASE_Y, "base-friendly-intact"),
-      this.add.image(WIDTH - 150, BASE_Y, "base-enemy-intact")
-    ];
-    for (const base of this.bases) {
-      base.setOrigin(0.5, 1).setDisplaySize(290, 290).setDepth(2);
+    if (era > 0) {
+      this.landscape.fillStyle(0x476e86, 0.15).fillRect(0, 0, WIDTH, HEIGHT);
+      this.landscape.lineStyle(1, era === 1 ? 0x348f91 : 0x536eb6, 0.24);
+      for (let x = 35; x < WIDTH; x += 50) this.landscape.lineBetween(x, 275, x, FLOOR_Y);
+      for (let y = 298; y < FLOOR_Y; y += 42) this.landscape.lineBetween(0, y, WIDTH, y);
     }
+    if (era > 1) {
+      this.landscape.fillStyle(0xf5d375, 0.08).fillRect(0, 0, WIDTH, HEIGHT);
+      this.landscape.fillStyle(0x334c75, 0.9).fillRect(960, 308, 188, 95);
+      this.landscape.fillStyle(0x76d8cf, 0.48).fillRect(974, 320, 160, 6);
+      this.landscape.fillStyle(0x93e6d8, 0.25).fillRect(984, 340, 42, 47);
+      this.landscape.fillStyle(0x93e6d8, 0.25).fillRect(1038, 340, 42, 47);
+      this.landscape.fillStyle(0x93e6d8, 0.25).fillRect(1092, 340, 42, 47);
+    }
+
+    this.lane.clear();
+    this.lane.lineStyle(2, 0xf7f1d4, 0.72).lineBetween(280, FLOOR_Y - 2, 1210, FLOOR_Y - 2);
+    this.lane.lineStyle(2, 0x58794f, 0.48).lineBetween(280, FLOOR_Y + 15, 1210, FLOOR_Y + 15);
+    this.lane.fillStyle(0xfff8d9, 0.8);
+    for (let x = 304; x < 1210; x += 64) this.lane.fillRect(x, FLOOR_Y + 5, 22, 3);
   }
 
-  private syncActors(state: BattleState): void {
+  private drawFloorGrid(): void {
+    this.landscape.fillStyle(0x819a63, 0.2);
+    for (let x = 0; x < WIDTH; x += 48) {
+      for (let y = FLOOR_Y + ((x / 48) % 2) * 12; y < HEIGHT; y += 24) this.landscape.fillRect(x, y, 22, 2);
+    }
+    this.landscape.fillStyle(0x5d7255, 0.3).fillRect(0, FLOOR_Y, WIDTH, 4);
+  }
+
+  private drawPixelCloud(x: number, y: number): void {
+    this.landscape.fillStyle(0xf5f2dc, 0.82);
+    this.landscape.fillRect(x, y + 12, 84, 19);
+    this.landscape.fillRect(x + 14, y, 29, 23);
+    this.landscape.fillRect(x + 38, y + 4, 32, 20);
+    this.landscape.fillStyle(0xd6e5d9, 0.65).fillRect(x + 9, y + 27, 70, 5);
+  }
+
+  private drawHeadquarters(x: number, era: number): void {
+    this.landscape.fillStyle(0x536b60).fillRect(x - 74, 428, 150, 108);
+    this.landscape.fillStyle(0xe7d29a).fillRect(x - 84, 416, 168, 17);
+    this.landscape.fillStyle(0x3c5553).fillRect(x - 67, 441, 135, 68);
+    this.landscape.fillStyle(0x4cbdb2).fillRect(x - 53, 451, 106, 39);
+    this.landscape.fillStyle(0xd8f4d6).fillRect(x - 42, 460, 27, 17);
+    this.landscape.fillStyle(0x538c94).fillRect(x - 9, 460, 51, 5);
+    this.landscape.fillStyle(0x538c94).fillRect(x - 9, 470, 38, 5);
+    this.landscape.fillStyle(0xd5a965).fillRect(x - 54, 499, 107, 9);
+    this.landscape.fillStyle(0x5b4030).fillRect(x - 37, 509, 11, 27);
+    this.landscape.fillRect(x + 25, 509, 11, 27);
+    if (era >= 1) {
+      this.landscape.fillStyle(0x405a69).fillRect(x - 69, 396, 61, 22);
+      this.landscape.fillStyle(0x86dfd1).fillRect(x - 61, 402, 45, 5);
+      this.landscape.fillStyle(0x405a69).fillRect(x + 9, 390, 61, 28);
+      this.landscape.fillStyle(0xb3e5d4).fillRect(x + 17, 398, 45, 5);
+    }
+    if (era >= 2) {
+      this.landscape.fillStyle(0xf2cb70).fillRect(x - 8, 384, 20, 8);
+      this.landscape.fillStyle(0xb5e7df).fillRect(x - 4, 372, 12, 12);
+      this.landscape.fillStyle(0xeaf2ce).fillRect(x - 1, 375, 6, 6);
+    }
+    this.landscape.fillStyle(0xede3c7).fillRect(x - 42, 424, 84, 5);
+  }
+
+  private drawDeadlineGate(x: number): void {
+    this.landscape.fillStyle(0x526773).fillRect(x - 79, 388, 158, 148);
+    this.landscape.fillStyle(0xd5a95c).fillRect(x - 94, 377, 188, 17);
+    this.landscape.fillStyle(0xe9e1c5).fillRect(x - 60, 404, 120, 76);
+    this.landscape.fillStyle(0x5f8390).fillRect(x - 48, 414, 96, 49);
+    this.landscape.fillStyle(0xa7e1d5).fillRect(x - 37, 424, 75, 5);
+    this.landscape.fillStyle(0xdcefd7).fillRect(x - 37, 435, 55, 5);
+    this.landscape.fillStyle(0xe2b66d).fillRect(x - 51, 470, 103, 8);
+    this.landscape.fillStyle(0x485d5a).fillRect(x - 58, 480, 16, 56);
+    this.landscape.fillRect(x + 42, 480, 16, 56);
+    this.landscape.fillStyle(0xf4db88).fillRect(x - 8, 351, 16, 16);
+    this.landscape.fillStyle(0x496c70).fillRect(x - 3, 356, 6, 6);
+  }
+
+  private syncEngineers(state: BattleState): void {
     const present = new Set<number>();
-    this.shadows.clear();
-
-    for (const unit of state.units) {
-      present.add(unit.id);
-      const x = unit.x / WORLD_WIDTH * WIDTH;
-      const y = LANE_Y + ((unit.id % 3) - 1) * 17;
-      let actor = this.actors.get(unit.id);
-
-      if (!actor) {
-        const sprite = this.add.sprite(x, y, actorTexture(unit.unitId, unit.side))
-          .setOrigin(0.5, 0.9)
-          .setScale(unit.unitId === "U14" ? 0.78 : 0.88)
-          .setFlipX(unit.side === 1)
-          .setDepth(4);
-        actor = {
-          sprite,
-          unitId: unit.unitId,
-          side: unit.side,
-          lastX: x,
-          lastHp: unit.hp,
-          lastFlashUntil: unit.flashUntil,
-          actionUntil: state.elapsed,
-          action: "idle",
-          deadAt: null
-        };
-        this.actors.set(unit.id, actor);
-        this.playAction(actor, "idle");
-        this.spawnDust(x, y + 7);
+    for (const engineer of state.engineers) {
+      present.add(engineer.id);
+      let view = this.engineers.get(engineer.id);
+      if (!view) {
+        view = { shape: this.add.graphics().setDepth(5), role: engineer.role };
+        this.engineers.set(engineer.id, view);
       }
-
-      const moving = Math.abs(x - actor.lastX) > 0.05;
-      const damaged = unit.hp < actor.lastHp;
-      const attacked = unit.flashUntil > actor.lastFlashUntil && unit.flashUntil > state.elapsed;
-      actor.sprite.setPosition(x, y);
-
-      if (attacked) {
-        this.playAction(actor, "attack", state.elapsed + 0.55);
-        this.spawnAttackEffect(unit, state);
-      } else if (damaged) {
-        this.playAction(actor, "hurt", state.elapsed + 0.42);
-      } else if (state.elapsed >= actor.actionUntil) {
-        this.playAction(actor, moving ? "walk" : "idle");
-      }
-
-      actor.lastX = x;
-      actor.lastHp = unit.hp;
-      actor.lastFlashUntil = unit.flashUntil;
-      this.shadows.fillStyle(0x201a14, 0.34).fillEllipse(x, y + 9, 36, 11);
+      this.drawEngineer(view.shape, engineer, state);
     }
-
-    for (const [id, actor] of this.actors) {
+    for (const [id, view] of this.engineers) {
       if (present.has(id)) continue;
-      if (actor.deadAt === null) {
-        actor.deadAt = this.time.now + 850;
-        this.playAction(actor, "death");
-        this.tweens.add({ targets: actor.sprite, alpha: 0, delay: 380, duration: 470 });
-      } else if (this.time.now >= actor.deadAt) {
-        actor.sprite.destroy();
-        this.actors.delete(id);
-      }
+      view.shape.destroy();
+      this.engineers.delete(id);
     }
   }
 
-  private playAction(actor: ActorVisual, action: ClipName, until = 0): void {
-    actor.action = action;
-    actor.actionUntil = until;
-    actor.sprite.play(animationKey(actor.unitId, actor.side, action), true);
-  }
+  private drawEngineer(graphics: Phaser.GameObjects.Graphics, engineer: Engineer, state: BattleState): void {
+    const x = engineer.x / WORLD_WIDTH * WIDTH;
+    const bob = engineer.action === "moving" ? Math.sin(state.elapsed * 12 + engineer.id) * 2 : engineer.action === "working" ? Math.sin(state.elapsed * 8 + engineer.id) : 0;
+    const y = UNIT_Y + (engineer.lane - 2) * 20 + bob;
+    const definition = getEngineerDefinition(engineer.role);
+    const color = definition.color;
+    const legOffset = engineer.action === "moving" ? Math.sin(state.elapsed * 15 + engineer.id) * 3 : 0;
+    graphics.clear();
+    graphics.fillStyle(0x394b3d, 0.3).fillRect(x - 18, y + 24, 37, 7);
+    graphics.fillStyle(0x4a3f34).fillRect(x - 10, y + 12 + legOffset, 7, 14);
+    graphics.fillRect(x + 3, y + 12 - legOffset, 7, 14);
+    graphics.fillStyle(0x514736).fillRect(x - 13, y + 24 + legOffset, 12, 5);
+    graphics.fillRect(x + 1, y + 24 - legOffset, 12, 5);
+    graphics.fillStyle(color).fillRect(x - 15, y - 5, 30, 20);
+    graphics.fillStyle(0xe7b88b).fillRect(x - 10, y - 24, 20, 18);
+    graphics.fillStyle(0x51483c).fillRect(x - 12, y - 28, 23, 8);
+    graphics.fillRect(x + 6, y - 19, 6, 7);
+    graphics.fillStyle(0x2e3738).fillRect(x + 3, y - 17, 3, 3);
+    graphics.fillStyle(color).fillRect(x - 19, y - 1, 7, 17);
+    graphics.fillRect(x + 12, y - 1, 7, 17);
+    graphics.fillStyle(0x3a4a50).fillRect(x - 15, y + 10, 30, 5);
+    graphics.fillStyle(0xffe2a1).fillRect(x - 4, y - 2, 7, 4);
 
-  private spawnDust(x: number, y: number): void {
-    const dust = this.add.image(x, y, "fx-dust").setDisplaySize(82, 62).setDepth(5).setAlpha(0.85);
-    this.tweens.add({
-      targets: dust,
-      y: y - 8,
-      alpha: 0,
-      scale: 0.7,
-      duration: 420,
-      onComplete: () => dust.destroy()
-    });
-  }
-
-  private spawnAttackEffect(source: BattleUnit, state: BattleState): void {
-    const target = source.targetId === null ? undefined : state.units.find((unit) => unit.id === source.targetId);
-    const x = target ? target.x / WORLD_WIDTH * WIDTH : source.side === 0 ? WIDTH - 150 : 150;
-    const y = target ? LANE_Y + ((target.id % 3) - 1) * 17 - 18 : LANE_Y - 12;
-
-    if (source.unitId === "U12") {
-      const startX = source.x / WORLD_WIDTH * WIDTH;
-      const startY = LANE_Y - 28;
-      const stone = this.add.circle(startX, startY, 5, 0xe0bf82).setDepth(5);
-      this.tweens.add({
-        targets: stone,
-        x,
-        y,
-        duration: 190,
-        ease: "Quad.Out",
-        onComplete: () => {
-          stone.destroy();
-          this.spawnImpact(x, y);
-        }
-      });
+    if (engineer.role === "intern") {
+      graphics.fillStyle(0xf7d877).fillRect(x - 10, y - 33, 21, 6);
+      graphics.fillStyle(0xf2f0df).fillRect(x - 7, y - 18, 4, 3);
+    } else if (engineer.role === "qa") {
+      graphics.fillStyle(0xedf0e8).fillRect(x + 11, y - 22, 8, 17);
+      graphics.fillStyle(0x8a79a8).fillRect(x + 13, y - 19, 4, 9);
+    } else if (engineer.role === "agent") {
+      graphics.fillStyle(0xeee8d5).fillRect(x - 10, y - 35, 20, 7);
+      graphics.fillStyle(0x92e8dc).fillRect(x - 3, y - 40, 6, 5);
+      graphics.fillStyle(0xf5e9cb).fillRect(x - 18, y - 2, 5, 8);
     } else {
-      this.spawnImpact(x, y);
+      graphics.fillStyle(0x2d494c).fillRect(x + 12, y + 2, 10, 8);
+      graphics.fillStyle(0xf1d995).fillRect(x + 14, y + 4, 5, 2);
+    }
+    if (engineer.action === "working") {
+      graphics.fillStyle(0xffefb0, 0.9).fillRect(x + 20, y - 12, 4, 4);
+      graphics.fillRect(x + 27, y - 18, 3, 3);
     }
   }
 
-  private spawnImpact(x: number, y: number): void {
-    const impact = this.add.image(x, y, "fx-stone-impact").setDisplaySize(58, 58).setDepth(5).setAlpha(0.9);
-    this.tweens.add({
-      targets: impact,
-      scale: 0.4,
-      alpha: 0,
-      duration: 240,
-      onComplete: () => impact.destroy()
-    });
-  }
-
-  private updateBases(state: BattleState): void {
-    for (const side of [0, 1] as const) {
-      const key = baseTextureKey(side, state.baseHp[side]);
-      if (key !== this.baseTextureKeys[side]) {
-        this.baseTextureKeys[side] = key;
-        this.bases[side].setTexture(key);
+  private syncRequests(state: BattleState): void {
+    const present = new Set<number>();
+    for (const request of state.requests) {
+      present.add(request.id);
+      let view = this.requests.get(request.id);
+      if (!view) {
+        view = this.createRequestView(request);
+        this.requests.set(request.id, view);
       }
+      this.updateRequestView(view, request);
+    }
+    for (const [id, view] of this.requests) {
+      if (present.has(id)) continue;
+      view.container.destroy(true);
+      this.requests.delete(id);
     }
   }
 
-  private drawActorOverlays(state: BattleState): void {
-    this.overlays.clear();
-    for (const unit of state.units) {
-      const actor = this.actors.get(unit.id);
-      if (!actor) continue;
-      const { x, y } = actor.sprite;
-      const definition = getUnitDefinition(unit.unitId);
-      const width = definition.heavy ? 43 : 38;
-      const barY = y - (definition.heavy ? 88 : 74);
-      const health = Phaser.Math.Clamp(unit.hp / unit.maxHp, 0, 1);
-      this.overlays.fillStyle(0x1b211f, 0.8).fillRoundedRect(x - width / 2, barY, width, 5, 2);
-      this.overlays.fillStyle(unit.side === 0 ? 0xa9d17e : 0xe38270).fillRoundedRect(x - width / 2, barY + 1, width * health, 3, 1);
-
-      if (unit.flashUntil > state.elapsed) {
-        const target = unit.targetId === null ? undefined : state.units.find((candidate) => candidate.id === unit.targetId);
-        const targetX = target ? target.x / WORLD_WIDTH * WIDTH : unit.side === 0 ? WIDTH - 150 : 150;
-        this.overlays.lineStyle(2, unit.side === 0 ? 0xffe5a4 : 0xffa18d, 0.45).lineBetween(x, y - 25, targetX, LANE_Y - 24);
-      }
-    }
+  private createRequestView(request: Requirement): RequestView {
+    const plate = this.add.graphics();
+    const title = this.add.text(-46, -14, request.title, { fontFamily: "monospace", fontSize: "12px", color: "#25353b", fontStyle: "bold" }).setOrigin(0, 0.5);
+    const code = this.add.text(-46, 1, request.code, { fontFamily: "monospace", fontSize: "9px", color: "#526168" }).setOrigin(0, 0.5);
+    const progress = this.add.graphics();
+    const container = this.add.container(0, 0, [plate, title, code, progress]).setDepth(request.isFinal ? 4 : 3);
+    return { container, plate, title, code, progress };
   }
-}
 
-function actorTexture(unitId: UnitId, side: Side): string {
-  return `${unitId}-${side === 0 ? "friendly" : "enemy"}`;
-}
-
-function animationKey(unitId: UnitId, side: Side, clip: ClipName): string {
-  return `${actorTexture(unitId, side)}-${clip}`;
-}
-
-function baseTextureKey(side: Side, hp: number): string {
-  const condition: BaseCondition = hp <= 0 ? "ruin" : hp / BASE_MAX_HP <= 0.25 ? "critical" : hp / BASE_MAX_HP <= 0.6 ? "worn" : "intact";
-  return `base-${side === 0 ? "friendly" : "enemy"}-${condition}`;
+  private updateRequestView(view: RequestView, request: Requirement): void {
+    const row = request.id % REQUEST_Y.length;
+    const x = request.x / WORLD_WIDTH * WIDTH;
+    const y = REQUEST_Y[row];
+    const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xb888ce : request.kind === "infra" ? 0x699bc5 : 0x4aafa6;
+    view.container.setPosition(x, y);
+    view.container.setDepth(request.isFinal ? 4 : 3);
+    view.title.setText(request.title);
+    view.code.setText(request.isFinal ? "P0 · RELEASE" : `${request.code} · ${request.kind.toUpperCase()}`);
+    view.plate.clear();
+    view.plate.fillStyle(0xf8f3de).fillRect(-60, -24, 120, 48);
+    view.plate.fillStyle(0x465e61).fillRect(-60, -24, 120, 5);
+    view.plate.fillStyle(accent).fillRect(-60, -24, 8, 48);
+    view.plate.fillStyle(0x61746f, 0.18).fillRect(-53, 19, 106, 2);
+    view.progress.clear();
+    view.progress.fillStyle(0xc9d3c1).fillRect(-46, 14, 94, 5);
+    view.progress.fillStyle(accent).fillRect(-46, 14, 94 * (1 - request.remainingWork / request.totalWork), 5);
+    view.progress.fillStyle(0xfff2bd).fillRect(-56, -16, 3, 3);
+  }
 }
