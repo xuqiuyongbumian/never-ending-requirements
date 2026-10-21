@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TelemetryReporter } from "../../src/ui/telemetry.ts";
+import { summarizeRun, TelemetryReporter } from "../../src/ui/telemetry.ts";
 
 test("persists and broadcasts player events, mapping results to win/loss", () => {
   const stored = new Map<string, string>();
@@ -41,4 +41,16 @@ test("persists and broadcasts player events, mapping results to win/loss", () =>
   assert.equal(events[0]?.runId, null);
   assert.ok(events[1]?.runId);
   assert.ok(events.every((event) => event.sessionId === events[0]?.sessionId));
+});
+
+test("summarizes completed requests, hires, and answered change events", () => {
+  const summary = summarizeRun([
+    { type: "recruit", at: 2, detail: { role: "frontend" } },
+    { type: "request_complete", at: 10, detail: { request: "R-001" } },
+    { type: "event_choice", at: 38, detail: { choice: "freeze-scope" } },
+    { type: "debt_change", at: 39, detail: { delta: -10 } },
+    { type: "request_complete", at: 48, detail: { request: "GO-LIVE" } }
+  ]);
+
+  assert.deepEqual(summary, { completedRequests: 2, recruitedEngineers: 1, answeredChanges: 1 });
 });

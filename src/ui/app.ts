@@ -17,7 +17,7 @@ import {
   type EngineerId
 } from "../core/game";
 import { GAME_ASSETS } from "../presentation/game-assets";
-import { TelemetryReporter } from "./telemetry";
+import { summarizeRun, TelemetryReporter } from "./telemetry";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
 
@@ -157,7 +157,10 @@ export class GameApp {
           <span class="result-kicker">1024 极限上线 · 项目复盘</span>
           <h2 data-result-title>项目上线成功</h2>
           <p data-result-copy></p>
-          <div class="result-stats"><span>最终健康<strong data-final-health></strong></span><span>技术债<strong data-final-debt></strong></span><span>完成时代<strong data-final-era></strong></span></div>
+          <div class="result-stats">
+            <span>最终健康<strong data-final-health></strong></span><span>技术债<strong data-final-debt></strong></span><span>完成时代<strong data-final-era></strong></span>
+            <span>验收需求<strong data-run-requests></strong></span><span>招募工程师<strong data-run-hires></strong></span><span>应对变更<strong data-run-events></strong></span>
+          </div>
           <div class="result-actions"><button class="primary-button" id="replay-battle">再开一个项目 <span>↻</span></button><button class="secondary-button" id="export-analytics">导出本局行为数据</button><button class="tertiary-button" id="result-home">返回首页</button></div>
         </section>
       </section>`;
@@ -332,6 +335,10 @@ export class GameApp {
     this.setText("[data-final-health]", `${Math.ceil(state.projectHealth)}%`);
     this.setText("[data-final-debt]", Math.floor(state.techDebt).toString());
     this.setText("[data-final-era]", ERAS[state.techEra].name);
+    const summary = summarizeRun(state.telemetry);
+    this.setText("[data-run-requests]", summary.completedRequests.toString());
+    this.setText("[data-run-hires]", summary.recruitedEngineers.toString());
+    this.setText("[data-run-events]", summary.answeredChanges.toString());
   }
 
   private consumeTelemetry(state: BattleState): void {

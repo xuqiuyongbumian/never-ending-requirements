@@ -90,6 +90,14 @@ export class TelemetryReporter {
   }
 }
 
+export function summarizeRun(events: readonly GameTelemetryEvent[]) {
+  return {
+    completedRequests: events.filter((event) => event.type === "request_complete").length,
+    recruitedEngineers: events.filter((event) => event.type === "recruit").length,
+    answeredChanges: events.filter((event) => event.type === "event_choice").length
+  };
+}
+
 function makeId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
