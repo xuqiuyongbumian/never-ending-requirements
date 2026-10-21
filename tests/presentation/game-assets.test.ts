@@ -3,34 +3,26 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
-  ENGINEER_ANIMATION_FRAMES,
-  ENGINEER_SPRITE_FRAME_SIZE,
   GAME_ASSETS,
-  GAME_SPRITESHEETS,
   GAME_TEXTURES,
-  engineerSpriteSheet,
+  engineerTexture,
   requestTexture
 } from "../../src/presentation/game-assets.ts";
 
-test("maps the five engineer roles to distinct portraits and animated sheets", () => {
+test("maps every engineer role to a distinct high-resolution portrait", () => {
   const roles = Object.keys(GAME_ASSETS.characters) as Array<keyof typeof GAME_ASSETS.characters>;
-  const keys = roles.map(engineerSpriteSheet);
+  const keys = roles.map(engineerTexture);
   assert.equal(new Set(keys).size, 5);
-  assert.equal(Object.keys(GAME_SPRITESHEETS).length, 5);
 
   const assets = [
     ...Object.values(GAME_ASSETS.characters),
-    ...Object.values(GAME_SPRITESHEETS),
     ...Object.values(GAME_ASSETS.tasks),
     ...GAME_ASSETS.backgrounds,
     ...Object.values(GAME_ASSETS.icons)
   ];
   for (const asset of assets) assert.ok(existsSync(resolve("public", asset.src.replace(/^\.\//, "").replace(/^\//, ""))), asset.src);
   assert.equal(new Set(GAME_TEXTURES.map((asset) => asset.key)).size, GAME_TEXTURES.length);
-
-  assert.equal(ENGINEER_SPRITE_FRAME_SIZE, 256);
-  assert.deepEqual(Object.values(ENGINEER_ANIMATION_FRAMES).map(({ start, end }) => end - start + 1), [6, 8, 6]);
-  assert.deepEqual(Object.values(ENGINEER_ANIMATION_FRAMES).map(({ start }) => Math.floor(start / 8)), [0, 1, 2]);
+  for (const role of roles) assert.ok(GAME_TEXTURES.some((asset) => asset.key === engineerTexture(role)));
 });
 
 test("selects the request mascot from its live type and workload", () => {

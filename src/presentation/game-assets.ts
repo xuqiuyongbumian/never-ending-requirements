@@ -30,32 +30,14 @@ export const GAME_ASSETS = {
   }
 } as const;
 
-export const GAME_SPRITESHEETS = {
-  intern: { key: "engineer-sheet-intern", src: asset("assets/game/animations/intern.webp") },
-  frontend: { key: "engineer-sheet-frontend", src: asset("assets/game/animations/frontend.webp") },
-  backend: { key: "engineer-sheet-backend", src: asset("assets/game/animations/backend.webp") },
-  qa: { key: "engineer-sheet-qa", src: asset("assets/game/animations/qa.webp") },
-  agent: { key: "engineer-sheet-agent", src: asset("assets/game/animations/agent.webp") }
-} as const;
-
-export const ENGINEER_SPRITE_FRAME_SIZE = 256;
-export const ENGINEER_ANIMATION_FRAMES = {
-  idle: { start: 0, end: 5, frameRate: 6 },
-  run: { start: 8, end: 15, frameRate: 12 },
-  work: { start: 16, end: 21, frameRate: 8 }
-} as const;
-
 export const GAME_TEXTURES = [
+  ...Object.values(GAME_ASSETS.characters),
   ...Object.values(GAME_ASSETS.tasks),
   ...GAME_ASSETS.backgrounds
 ] as const;
 
-export function engineerSpriteSheet(role: EngineerId): string {
-  return GAME_SPRITESHEETS[role].key;
-}
-
-export function engineerAnimationKey(role: EngineerId, action: keyof typeof ENGINEER_ANIMATION_FRAMES): string {
-  return `${role}-${action}`;
+export function engineerTexture(role: EngineerId): string {
+  return GAME_ASSETS.characters[role].key;
 }
 
 export function requestTexture(request: Pick<Requirement, "kind" | "isFinal" | "totalWork">): string {
