@@ -8,12 +8,8 @@ import {
   type Requirement
 } from "../core/game";
 import {
-  ENGINEER_ANIMATION_FRAMES,
-  ENGINEER_SPRITE_FRAME_SIZE,
-  engineerAnimationKey,
-  engineerSpriteSheet,
+  engineerTexture,
   GAME_ASSETS,
-  GAME_SPRITESHEETS,
   GAME_TEXTURES,
   requestTexture
 } from "./game-assets";
@@ -24,11 +20,13 @@ const FLOOR_Y = 536;
 const REQUEST_Y = [310, 370, 430] as const;
 
 interface EngineerView {
-  sprite: Phaser.GameObjects.Sprite;
+  sprite: Phaser.GameObjects.Image;
   shadow: Phaser.GameObjects.Graphics;
   aura: Phaser.GameObjects.Graphics;
   activity: Phaser.GameObjects.Text;
   baseScale: number;
+  motionAction: Engineer["action"];
+  motionTween: Phaser.Tweens.Tween | null;
 }
 
 interface RequestView {
@@ -60,21 +58,12 @@ export class BattleScene extends Phaser.Scene {
     for (const asset of GAME_TEXTURES) {
       if (!this.textures.exists(asset.key)) this.load.image(asset.key, asset.src);
     }
-    for (const sheet of Object.values(GAME_SPRITESHEETS)) {
-      if (!this.textures.exists(sheet.key)) {
-        this.load.spritesheet(sheet.key, sheet.src, {
-          frameWidth: ENGINEER_SPRITE_FRAME_SIZE,
-          frameHeight: ENGINEER_SPRITE_FRAME_SIZE
-        });
-      }
-    }
   }
 
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
     this.engineers.clear();
     this.requests.clear();
-    this.createEngineerAnimations();
     const era = this.state?.techEra ?? 0;
     const background = GAME_ASSETS.backgrounds[era] ?? GAME_ASSETS.backgrounds[0];
     this.background = this.add.image(WIDTH / 2, HEIGHT / 2, background.key).setDepth(0);
@@ -89,26 +78,6 @@ export class BattleScene extends Phaser.Scene {
     this.lastHudUpdate = 0;
     this.lastEra = era;
     this.telemetryCursor = 0;
-  }
-
-  private createEngineerAnimations(): void {
-    const roles = Object.keys(GAME_SPRITESHEETS) as Array<keyof typeof GAME_SPRITESHEETS>;
-    for (const role of roles) {
-      const texture = engineerSpriteSheet(role);
-      for (const [action, range] of Object.entries(ENGINEER_ANIMATION_FRAMES) as Array<[
-        keyof typeof ENGINEER_ANIMATION_FRAMES,
-        (typeof ENGINEER_ANIMATION_FRAMES)[keyof typeof ENGINEER_ANIMATION_FRAMES]
-      ]>) {
-        const key = engineerAnimationKey(role, action);
-        if (this.anims.exists(key)) continue;
-        this.anims.create({
-          key,
-          frames: this.anims.generateFrameNumbers(texture, { start: range.start, end: range.end }),
-          frameRate: range.frameRate,
-          repeat: -1
-        });
-      }
-    }
   }
 
   update(_time: number, deltaMs: number): void {
@@ -153,10 +122,10 @@ export class BattleScene extends Phaser.Scene {
       present.add(engineer.id);
       let view = this.engineers.get(engineer.id);
       if (!view) {
-        const sprite = this.add.sprite(0, FLOOR_Y, engineerSpriteSheet(engineer.role), 0).setOrigin(0.5, 1).setDepth(5);
+        const sprite = this.add.image(0, FLOOR_Y, engineerTexture(engineer.role)).setOrigin(0.5, 1).setDepth(5);
         const maxHeight = engineer.role === "agent" ? 132 : 120;
         const baseScale = Math.min(maxHeight / sprite.height, 138 / sprite.width);
-        sprite.setScale(baseScale).play(engineerAnimationKey(engineer.role, "idle"));
+        sprite.setScale(baseScale);
         view = {
           sprite,
           shadow: this.add.graphics().setDepth(4),
@@ -165,8 +134,11 @@ export class BattleScene extends Phaser.Scene {
             fontFamily: "ui-monospace, monospace", fontSize: "15px", fontStyle: "bold",
             color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
           }).setOrigin(0.5).setDepth(6).setVisible(false),
-          baseScale
+          baseScale,
+          motionAction: "idle",
+          motionTween: null
         };
+        this.playEngineerMotion(view, "idle");
         this.engineers.set(engineer.id, view);
       }
       this.updateEngineerView(view, engineer, state);
@@ -174,6 +146,7 @@ export class BattleScene extends Phaser.Scene {
     for (const [id, view] of this.engineers) {
       if (present.has(id)) continue;
       view.sprite.destroy();
+      view.motionTween?.stop();
       view.shadow.destroy();
       view.aura.destroy();
       view.activity.destroy();
@@ -187,9 +160,7 @@ export class BattleScene extends Phaser.Scene {
     const moving = engineer.action === "moving";
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
-    const action = moving ? "run" : working ? "work" : "idle";
-    const animation = engineerAnimationKey(engineer.role, action);
-    if (view.sprite.anims.currentAnim?.key !== animation) view.sprite.play(animation);
+    this.playEngineerMotion(view, moving ? "moving" : working ? "working" : "idle");
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     view.sprite.setPosition(x, FLOOR_Y + hover).setFlipX(target ? target.x < engineer.x : false);
 
@@ -202,6 +173,29 @@ export class BattleScene extends Phaser.Scene {
     view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover);
     if (working) view.activity.setText(({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role]);
     view.activity.setColor(engineer.role === "agent" ? "#a9a8ff" : `#${definition.color.toString(16).padStart(6, "0")}`);
+  }
+
+  private playEngineerMotion(view: EngineerView, action: Engineer["action"]): void {
+    if (view.motionAction === action && view.motionTween?.isPlaying()) return;
+    view.motionTween?.stop();
+    view.sprite.setScale(view.baseScale).setAngle(0);
+    view.motionAction = action;
+
+    const motion = action === "moving"
+      ? { scaleY: view.baseScale * 1.035, angle: 1.4, duration: 170 }
+      : action === "working"
+        ? { scaleY: view.baseScale * 1.018, angle: -0.4, duration: 390 }
+        : { scaleY: view.baseScale * 1.008, angle: 0, duration: 900 };
+
+    view.motionTween = this.tweens.add({
+      targets: view.sprite,
+      scaleY: motion.scaleY,
+      angle: motion.angle,
+      duration: motion.duration,
+      ease: "Sine.InOut",
+      yoyo: true,
+      repeat: -1
+    });
   }
 
   private syncRequests(state: BattleState): void {
@@ -263,12 +257,12 @@ export class BattleScene extends Phaser.Scene {
       const x = view?.container.x ?? WIDTH / 2;
       const y = view?.container.y ?? FLOOR_Y - 80;
       const check = this.add.text(x, y - 38, "✓", { fontFamily: "sans-serif", fontSize: "28px", fontStyle: "bold", color: "#42ad79", stroke: "#fff8df", strokeThickness: 6 }).setOrigin(0.5).setDepth(9);
-      const pixels = this.add.graphics().setPosition(x, y - 18).setDepth(8);
+      const particles = this.add.graphics().setPosition(x, y - 18).setDepth(8);
       [0x55c686, 0xf0c35f, 0x6db6df, 0xcc86d5, 0xef8e73].forEach((color, index) => {
-        pixels.fillStyle(color).fillRect((index - 2) * 9, index % 2 ? -8 : 2, 4, 4);
+        particles.fillStyle(color).fillCircle((index - 2) * 9, index % 2 ? -8 : 2, 2.8);
       });
       this.tweens.add({ targets: check, y: y - 78, alpha: 0, scale: 1.3, duration: 660, ease: "Cubic.Out", onComplete: () => check.destroy() });
-      this.tweens.add({ targets: pixels, y: y - 58, alpha: 0, duration: 540, ease: "Cubic.Out", onComplete: () => pixels.destroy() });
+      this.tweens.add({ targets: particles, y: y - 58, alpha: 0, duration: 540, ease: "Cubic.Out", onComplete: () => particles.destroy() });
     }
   }
 }

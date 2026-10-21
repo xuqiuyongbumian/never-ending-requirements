@@ -52,7 +52,7 @@ export class GameApp {
             <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
             <h2>需求永不眠：1024 极限上线</h2>
             <p>需求会从右侧逼近项目现场。工程师自动接单；完成后获得预算和技术经验。管理技术债，赶在 05:00 前完成 GO-LIVE。</p>
-            <div class="mission-objective"><span class="pixel-check">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
+            <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
             <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
           </article>
           <div class="era-preview">
@@ -75,7 +75,7 @@ export class GameApp {
     this.state = state;
     this.telemetryCursor = 0;
     if (!this.game) {
-      this.root.innerHTML = `<section class="loading-screen"><span class="loading-pixel">1024</span><strong>正在准备项目现场</strong><small>首次启动正在载入游戏引擎…</small></section>`;
+      this.root.innerHTML = `<section class="loading-screen"><span class="loading-mark">1024</span><strong>正在准备项目现场</strong><small>首次启动正在载入游戏引擎…</small></section>`;
       try {
         this.game = await this.createGame((nextState) => this.updateHud(nextState));
       } catch {
@@ -115,6 +115,7 @@ export class GameApp {
             <div class="project-status right-status">
               <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.techDebt.src}" alt="" aria-hidden="true">技术债</span><strong data-debt-label>0</strong></div>
               <span class="status-track debt-track"><i data-debt-bar></i></span>
+              <small class="debt-warning" data-debt-warning role="status" aria-live="polite" hidden>线上事故风险升高</small>
             </div>
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
@@ -123,18 +124,18 @@ export class GameApp {
         <div class="tutorial-callout" data-tutorial role="status" aria-live="polite"></div>
         <div class="battle-notice" data-notice role="status" aria-live="polite"></div>
 
-        <div class="team-strip" aria-live="polite">
-          <span class="team-label">研发团队</span>
-          <span data-team>1 / ${MAX_POPULATION}</span>
-          <span class="team-separator">·</span>
-          <span data-queue>招聘队列：空</span>
-          <span class="team-separator">·</span>
-          <span data-open-requests>待办 0</span>
-          <button id="speed-game" class="speed-button">速度　1×</button>
-        </div>
-
         <section class="unit-deck" aria-label="招聘工程师">
-          <div class="deck-heading"><span><i class="heading-pixel"></i>研发团队</span><small>快捷键 1–5 招募 · 角色悬停查看专长</small></div>
+          <div class="deck-heading">
+            <span><i class="heading-dot"></i>研发团队</span>
+            <div class="deck-status">
+              <span class="deck-team-count">团队 <b data-team>1 / ${MAX_POPULATION}</b></span>
+              <span class="deck-separator">·</span>
+              <span data-queue>招聘队列：空</span>
+              <span class="deck-separator">·</span>
+              <span data-open-requests>待办 0</span>
+              <button id="speed-game" class="speed-button">速度 1×</button>
+            </div>
+          </div>
           <div class="unit-cards">${ENGINEER_DEFS.map((engineer, index) => `
             <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算" title="${engineer.summary}">
               <span class="unit-card-top"><span class="unit-key">0${index + 1}</span><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"></span>
@@ -184,7 +185,18 @@ export class GameApp {
 
   private hire(role: EngineerId): void {
     if (!this.state) return;
-    hireEngineer(this.state, role);
+    const hired = hireEngineer(this.state, role);
+    if (hired && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const card = this.root.querySelector<HTMLButtonElement>(`[data-role="${role}"]`);
+      card?.animate(
+        [
+          { transform: "scale(1)", boxShadow: "0 0 0 rgb(255 189 115 / 0%)" },
+          { transform: "scale(1.045)", boxShadow: "0 0 22px rgb(255 189 115 / 44%)", offset: 0.55 },
+          { transform: "scale(1)", boxShadow: "0 0 0 rgb(255 189 115 / 0%)" }
+        ],
+        { duration: 340, easing: "cubic-bezier(.2,.8,.25,1)" }
+      );
+    }
     this.updateHud(this.state);
   }
 
@@ -270,7 +282,10 @@ export class GameApp {
     this.updateBar("[data-health-bar]", state.projectHealth / MAX_PROJECT_HEALTH);
     this.updateBar("[data-debt-bar]", state.techDebt / 200);
     this.root.querySelector(".battle-ui")?.setAttribute("data-era", String(state.techEra));
-    this.root.querySelector(".right-status")?.classList.toggle("debt-critical", state.techDebt >= 100);
+    const debtStatus = this.root.querySelector<HTMLElement>(".right-status");
+    debtStatus?.classList.toggle("debt-critical", state.techDebt >= 100);
+    const debtWarning = this.root.querySelector<HTMLElement>("[data-debt-warning]");
+    if (debtWarning) debtWarning.hidden = state.techDebt < 100;
 
     const order = state.queue[0];
     this.setText("[data-queue]", order

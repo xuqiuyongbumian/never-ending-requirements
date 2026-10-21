@@ -16,7 +16,9 @@ new GameApp(overlay, async (updateHud) => {
     height: 720,
     backgroundColor: "#191c31",
     scale: {
-      mode: window.innerWidth / window.innerHeight < 1 ? Phaser.Scale.FIT : Phaser.Scale.ENVELOP,
+      // Keep the whole playfield visible at every aspect ratio. ENVELOP crops
+      // the request entry and UI-safe lanes on non-16:9 desktop windows.
+      mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH
     },
     scene: [BattleScene]
