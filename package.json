@@ -1,12 +1,12 @@
 {
-  "name": "epoch-rush-web",
+  "name": "1024-extreme-launch",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test": "node --experimental-strip-types --test tests/core/game.test.ts",
+    "test": "node --experimental-strip-types --test tests/core/game.test.ts tests/ui/telemetry.test.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
