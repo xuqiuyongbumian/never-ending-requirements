@@ -25,7 +25,6 @@ export class GameApp {
     this.state = null;
     this.root.innerHTML = `
       <section class="menu-screen">
-        <div class="menu-atmosphere" aria-hidden="true"></div>
         <div class="menu-content">
           <div class="eyebrow"><span class="eyebrow-dot"></span>文明冲锋 · 网页先行版</div>
           <h1>一线万年</h1>
@@ -44,7 +43,7 @@ export class GameApp {
           <div class="roster-heading"><span>可用兵种</span><span>石器时代 · 4 个兵种</span></div>
           <div class="roster-preview">${UNIT_DEFS.map((unit) => `
             <div class="preview-unit">
-              <span class="unit-token" style="--unit-color:#${unit.color.toString(16).padStart(6, "0")}">${unit.shortName}</span>
+              <span class="unit-token"><img src="/assets/ui/units/${unit.id}.png" alt=""></span>
               <span class="preview-unit-copy"><strong>${unit.name}</strong><small>${unit.role}</small></span>
               <span class="preview-cost">${unit.cost}<small> 金</small></span>
             </div>`).join("")}
@@ -84,7 +83,7 @@ export class GameApp {
           <div class="battle-title"><span class="title-kicker">A1 · 石器时代</span><strong>石器前线</strong></div>
           <div class="battle-clock"><span class="clock-label">战斗时间</span><strong data-time>00:00</strong></div>
           <div class="header-actions">
-            <div class="gold-counter"><span class="gold-glyph">◈</span><strong data-gold>240</strong><small>金币</small></div>
+            <div class="gold-counter"><img class="gold-icon" src="/assets/ui/resources/gold.png" alt=""><strong data-gold>240</strong><small>金币</small></div>
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
         </header>
@@ -107,7 +106,7 @@ export class GameApp {
           <div class="deck-heading"><span>训练部队</span><small>快捷键 1–4</small></div>
           <div class="unit-cards">${UNIT_DEFS.map((unit, index) => `
             <button class="unit-card" data-unit="${unit.id}" aria-label="训练${unit.name}，花费${unit.cost}金币">
-              <span class="unit-card-top"><span class="unit-token" style="--unit-color:#${unit.color.toString(16).padStart(6, "0")}">${unit.shortName}</span><span class="unit-key">${index + 1}</span></span>
+              <span class="unit-card-top"><span class="unit-token"><img src="/assets/ui/units/${unit.id}.png" alt=""></span><span class="unit-key">${index + 1}</span></span>
               <strong>${unit.name}</strong>
               <span class="unit-card-bottom"><span>${unit.role} · ${unit.trainingTime.toFixed(1)}秒</span><b>◈ ${unit.cost}</b></span>
             </button>`).join("")}

@@ -1,37 +1,99 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
+  BASE_MAX_HP,
   getUnitDefinition,
+  UNIT_DEFS,
   WORLD_WIDTH,
   type BattleState,
-  type BattleUnit
+  type BattleUnit,
+  type Side,
+  type UnitId
 } from "../core/game";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const LANE_Y = 502;
+const LANE_Y = 518;
+const BASE_Y = 568;
+const UNIT_FRAME_SIZE: Record<UnitId, number> = { U11: 128, U12: 128, U13: 128, U14: 160 };
+const CLIPS = {
+  idle: { frames: [0, 1, 2, 3, 4, 5], frameRate: 6, repeat: -1 },
+  walk: { frames: [6, 7, 8, 9, 10, 11], frameRate: 10, repeat: -1 },
+  attack: { frames: [12, 13, 14, 15, 16, 17], frameRate: 12, repeat: 0 },
+  hurt: { frames: [18, 19, 20, 21, 22, 23], frameRate: 12, repeat: 0 },
+  death: { frames: [24, 25, 26, 27, 28, 29], frameRate: 9, repeat: 0 }
+} as const;
+type ClipName = keyof typeof CLIPS;
+type BaseCondition = "intact" | "worn" | "critical" | "ruin";
+
+interface ActorVisual {
+  sprite: Phaser.GameObjects.Sprite;
+  unitId: UnitId;
+  side: Side;
+  lastX: number;
+  lastHp: number;
+  lastFlashUntil: number;
+  actionUntil: number;
+  action: ClipName;
+  deadAt: number | null;
+}
 
 export class BattleScene extends Phaser.Scene {
   private state: BattleState | null = null;
-  private actors!: Phaser.GameObjects.Graphics;
   private lastHudUpdate = 0;
+  private actors = new Map<number, ActorVisual>();
+  private bases!: [Phaser.GameObjects.Image, Phaser.GameObjects.Image];
+  private baseTextureKeys: [string, string] = ["", ""];
+  private shadows!: Phaser.GameObjects.Graphics;
+  private overlays!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: "battle", active: false });
   }
 
+  preload(): void {
+    this.load.image("battle-background", "/assets/environment/backgrounds/A1-battle.webp");
+    this.load.image("base-friendly-intact", "/assets/environment/bases/A1.png");
+    this.load.image("base-enemy-intact", "/assets/environment/bases/A1-enemy.png");
+    this.load.image("base-friendly-worn", "/assets/base/A1-worn.png");
+    this.load.image("base-enemy-worn", "/assets/base/A1-worn-enemy.png");
+    this.load.image("base-friendly-critical", "/assets/base/A1-critical.png");
+    this.load.image("base-enemy-critical", "/assets/base/A1-critical-enemy.png");
+    this.load.image("base-friendly-ruin", "/assets/base/A1-ruin.png");
+    this.load.image("base-enemy-ruin", "/assets/base/A1-ruin-enemy.png");
+    this.load.image("fx-dust", "/assets/fx/dust.png");
+    this.load.image("fx-stone-impact", "/assets/fx/stone_impact.png");
+
+    for (const unit of UNIT_DEFS) {
+      for (const side of [0, 1] as const) {
+        const texture = actorTexture(unit.id, side);
+        const palette = side === 0 ? "" : "-enemy";
+        this.load.spritesheet(texture, `/assets/characters/animations/${unit.id}${palette}.png`, {
+          frameWidth: UNIT_FRAME_SIZE[unit.id],
+          frameHeight: UNIT_FRAME_SIZE[unit.id]
+        });
+      }
+    }
+  }
+
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
+    this.actors.clear();
+    this.createAnimations();
     this.drawLandscape();
     this.drawBases();
-    this.actors = this.add.graphics();
+    this.shadows = this.add.graphics().setDepth(3);
+    this.overlays = this.add.graphics().setDepth(6);
+    this.lastHudUpdate = 0;
   }
 
   update(_time: number, deltaMs: number): void {
     if (!this.state) return;
 
     advanceBattle(this.state, deltaMs / 1000);
-    this.drawActors();
+    this.syncActors(this.state);
+    this.updateBases(this.state);
+    this.drawActorOverlays(this.state);
 
     if (this.time.now - this.lastHudUpdate >= 100) {
       this.lastHudUpdate = this.time.now;
@@ -40,112 +102,201 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  private createAnimations(): void {
+    for (const unit of UNIT_DEFS) {
+      for (const side of [0, 1] as const) {
+        const texture = actorTexture(unit.id, side);
+        for (const [name, clip] of Object.entries(CLIPS) as [ClipName, typeof CLIPS[ClipName]][]) {
+          const key = animationKey(unit.id, side, name);
+          if (this.anims.exists(key)) continue;
+          this.anims.create({
+            key,
+            frames: this.anims.generateFrameNumbers(texture, { frames: [...clip.frames] }),
+            frameRate: clip.frameRate,
+            repeat: clip.repeat
+          });
+        }
+      }
+    }
+  }
+
   private drawLandscape(): void {
-    const sky = this.add.graphics();
-    sky.fillStyle(0x14232d).fillRect(0, 0, WIDTH, HEIGHT);
-    sky.fillStyle(0x263947).fillRect(0, 288, WIDTH, 150);
-    sky.fillStyle(0x344238).fillRect(0, 398, WIDTH, 140);
-    sky.fillStyle(0x69563d).fillRect(0, 526, WIDTH, HEIGHT - 526);
-
-    sky.fillStyle(0xe6b76a, 0.75).fillCircle(1050, 180, 62);
-    sky.fillStyle(0xd9b16b).fillRect(0, 430, WIDTH, 5);
-    sky.fillStyle(0x806a4c).fillRect(0, LANE_Y + 12, WIDTH, 22);
-    sky.fillStyle(0x9e8054, 0.75).fillRect(0, LANE_Y + 11, WIDTH, 4);
-
-    for (let i = 0; i < 16; i += 1) {
-      const x = 34 + i * 83;
-      const y = 408 + ((i * 31) % 36);
-      const radius = 13 + ((i * 17) % 15);
-      sky.fillStyle(i % 2 === 0 ? 0x3b4936 : 0x46513a, 0.95).fillCircle(x, y, radius);
-    }
-
-    for (let i = 0; i < 23; i += 1) {
-      const x = 20 + i * 57;
-      const y = 570 + ((i * 19) % 120);
-      sky.fillStyle(i % 3 === 0 ? 0x806b4c : 0x5a5b3d, 0.7).fillCircle(x, y, 2 + (i % 3));
-    }
-
-    this.add.text(WIDTH / 2, 431, "石器前线", {
-      color: "#d8c49a",
-      fontFamily: "system-ui, PingFang SC, sans-serif",
-      fontSize: "15px",
-      letterSpacing: 5
-    }).setOrigin(0.5);
+    const background = this.add.image(WIDTH / 2, HEIGHT / 2, "battle-background").setDepth(0);
+    background.setScale(Math.max(WIDTH / background.width, HEIGHT / background.height));
+    this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x141b20, 0.08).setDepth(1);
+    this.add.rectangle(WIDTH / 2, LANE_Y + 42, WIDTH, 1, 0xf4d39a, 0.2).setDepth(2);
   }
 
   private drawBases(): void {
-    const bases = this.add.graphics();
-    this.drawBase(bases, 18, 0x92724c, 0x473e32);
-    this.drawBase(bases, WIDTH - 100, 0xa25b4e, 0x473635);
+    this.bases = [
+      this.add.image(150, BASE_Y, "base-friendly-intact"),
+      this.add.image(WIDTH - 150, BASE_Y, "base-enemy-intact")
+    ];
+    for (const base of this.bases) {
+      base.setOrigin(0.5, 1).setDisplaySize(290, 290).setDepth(2);
+    }
   }
 
-  private drawBase(graphics: Phaser.GameObjects.Graphics, x: number, wall: number, shadow: number): void {
-    graphics.fillStyle(shadow).fillRect(x - 7, 430, 90, 115);
-    graphics.fillStyle(wall).fillRect(x, 445, 76, 101);
-    graphics.fillStyle(shadow).fillRect(x + 8, 457, 13, 89);
-    graphics.fillStyle(shadow).fillRect(x + 54, 457, 13, 89);
-    graphics.fillStyle(0xc7a66e).fillRect(x - 4, 435, 84, 15);
-    graphics.fillStyle(0x302d29).fillRect(x + 26, 494, 25, 52);
-    graphics.fillStyle(0xdbc08b).fillRect(x + 20, 470, 10, 15);
-    graphics.fillStyle(0xdbc08b).fillRect(x + 47, 470, 10, 15);
-  }
+  private syncActors(state: BattleState): void {
+    const present = new Set<number>();
+    this.shadows.clear();
 
-  private drawActors(): void {
-    const state = this.state;
-    if (!state) return;
-    const graphics = this.actors;
-    graphics.clear();
+    for (const unit of state.units) {
+      present.add(unit.id);
+      const x = unit.x / WORLD_WIDTH * WIDTH;
+      const y = LANE_Y + ((unit.id % 3) - 1) * 17;
+      let actor = this.actors.get(unit.id);
 
-    this.drawBaseHealth(graphics, 0, state.baseHp[0], 18);
-    this.drawBaseHealth(graphics, 1, state.baseHp[1], WIDTH - 100);
+      if (!actor) {
+        const sprite = this.add.sprite(x, y, actorTexture(unit.unitId, unit.side))
+          .setOrigin(0.5, 0.9)
+          .setScale(unit.unitId === "U14" ? 0.78 : 0.88)
+          .setFlipX(unit.side === 1)
+          .setDepth(4);
+        actor = {
+          sprite,
+          unitId: unit.unitId,
+          side: unit.side,
+          lastX: x,
+          lastHp: unit.hp,
+          lastFlashUntil: unit.flashUntil,
+          actionUntil: state.elapsed,
+          action: "idle",
+          deadAt: null
+        };
+        this.actors.set(unit.id, actor);
+        this.playAction(actor, "idle");
+        this.spawnDust(x, y + 7);
+      }
 
-    for (const unit of state.units) this.drawUnit(graphics, unit, state);
-  }
+      const moving = Math.abs(x - actor.lastX) > 0.05;
+      const damaged = unit.hp < actor.lastHp;
+      const attacked = unit.flashUntil > actor.lastFlashUntil && unit.flashUntil > state.elapsed;
+      actor.sprite.setPosition(x, y);
 
-  private drawBaseHealth(graphics: Phaser.GameObjects.Graphics, side: 0 | 1, hp: number, x: number): void {
-    const ratio = Phaser.Math.Clamp(hp / 2400, 0, 1);
-    graphics.fillStyle(0x1b211f, 0.9).fillRect(x - 2, 554, 80, 8);
-    graphics.fillStyle(side === 0 ? 0x80b878 : 0xd36d5c).fillRect(x, 556, 76 * ratio, 4);
-  }
+      if (attacked) {
+        this.playAction(actor, "attack", state.elapsed + 0.55);
+        this.spawnAttackEffect(unit, state);
+      } else if (damaged) {
+        this.playAction(actor, "hurt", state.elapsed + 0.42);
+      } else if (state.elapsed >= actor.actionUntil) {
+        this.playAction(actor, moving ? "walk" : "idle");
+      }
 
-  private drawUnit(graphics: Phaser.GameObjects.Graphics, unit: BattleUnit, state: BattleState): void {
-    const definition = getUnitDefinition(unit.unitId);
-    const x = unit.x / WORLD_WIDTH * WIDTH;
-    const y = LANE_Y + ((unit.id % 3) - 1) * 17;
-    const radius = definition.heavy ? 22 : (definition.role === "远程" ? 15 : 18);
-    const mainColor = unit.side === 0 ? definition.color : tintTowardRed(definition.color);
-    const edgeColor = unit.side === 0 ? 0x18221f : 0x371f1d;
-
-    if (unit.flashUntil > state.elapsed) {
-      const target = unit.targetId === null ? null : state.units.find((candidate) => candidate.id === unit.targetId);
-      const targetX = target ? target.x / WORLD_WIDTH * WIDTH : (unit.side === 0 ? WIDTH - 64 : 64);
-      graphics.lineStyle(3, unit.side === 0 ? 0xf5dca5 : 0xffa08b, 0.9).lineBetween(x, y - 5, targetX, LANE_Y - 4);
+      actor.lastX = x;
+      actor.lastHp = unit.hp;
+      actor.lastFlashUntil = unit.flashUntil;
+      this.shadows.fillStyle(0x201a14, 0.34).fillEllipse(x, y + 9, 36, 11);
     }
 
-    graphics.fillStyle(edgeColor).fillCircle(x, y, radius + 3);
-    graphics.fillStyle(mainColor).fillCircle(x, y, radius);
-    graphics.fillStyle(0xe5d1a6).fillCircle(x, y - radius * 0.58, radius * 0.43);
-    graphics.fillStyle(edgeColor).fillRect(x - radius * 0.65, y + radius * 0.22, radius * 1.3, radius * 0.24);
+    for (const [id, actor] of this.actors) {
+      if (present.has(id)) continue;
+      if (actor.deadAt === null) {
+        actor.deadAt = this.time.now + 850;
+        this.playAction(actor, "death");
+        this.tweens.add({ targets: actor.sprite, alpha: 0, delay: 380, duration: 470 });
+      } else if (this.time.now >= actor.deadAt) {
+        actor.sprite.destroy();
+        this.actors.delete(id);
+      }
+    }
+  }
 
-    if (definition.role === "破甲") {
-      graphics.lineStyle(3, 0xe7e0c7).lineBetween(x, y - 3, x + (unit.side === 0 ? 27 : -27), y - 10);
-    } else if (definition.role === "远程") {
-      graphics.fillStyle(0x463b2c).fillCircle(x + (unit.side === 0 ? 11 : -11), y + 3, 4);
+  private playAction(actor: ActorVisual, action: ClipName, until = 0): void {
+    actor.action = action;
+    actor.actionUntil = until;
+    actor.sprite.play(animationKey(actor.unitId, actor.side, action), true);
+  }
+
+  private spawnDust(x: number, y: number): void {
+    const dust = this.add.image(x, y, "fx-dust").setDisplaySize(82, 62).setDepth(5).setAlpha(0.85);
+    this.tweens.add({
+      targets: dust,
+      y: y - 8,
+      alpha: 0,
+      scale: 0.7,
+      duration: 420,
+      onComplete: () => dust.destroy()
+    });
+  }
+
+  private spawnAttackEffect(source: BattleUnit, state: BattleState): void {
+    const target = source.targetId === null ? undefined : state.units.find((unit) => unit.id === source.targetId);
+    const x = target ? target.x / WORLD_WIDTH * WIDTH : source.side === 0 ? WIDTH - 150 : 150;
+    const y = target ? LANE_Y + ((target.id % 3) - 1) * 17 - 18 : LANE_Y - 12;
+
+    if (source.unitId === "U12") {
+      const startX = source.x / WORLD_WIDTH * WIDTH;
+      const startY = LANE_Y - 28;
+      const stone = this.add.circle(startX, startY, 5, 0xe0bf82).setDepth(5);
+      this.tweens.add({
+        targets: stone,
+        x,
+        y,
+        duration: 190,
+        ease: "Quad.Out",
+        onComplete: () => {
+          stone.destroy();
+          this.spawnImpact(x, y);
+        }
+      });
     } else {
-      graphics.fillStyle(0x66513a).fillRect(x + (unit.side === 0 ? 10 : -15), y - 5, 5, 24);
+      this.spawnImpact(x, y);
     }
+  }
 
-    const healthRatio = Phaser.Math.Clamp(unit.hp / unit.maxHp, 0, 1);
-    graphics.fillStyle(0x202421, 0.95).fillRect(x - 19, y - radius - 11, 38, 5);
-    graphics.fillStyle(unit.side === 0 ? 0x9bc879 : 0xe27c69).fillRect(x - 18, y - radius - 10, 36 * healthRatio, 3);
+  private spawnImpact(x: number, y: number): void {
+    const impact = this.add.image(x, y, "fx-stone-impact").setDisplaySize(58, 58).setDepth(5).setAlpha(0.9);
+    this.tweens.add({
+      targets: impact,
+      scale: 0.4,
+      alpha: 0,
+      duration: 240,
+      onComplete: () => impact.destroy()
+    });
+  }
+
+  private updateBases(state: BattleState): void {
+    for (const side of [0, 1] as const) {
+      const key = baseTextureKey(side, state.baseHp[side]);
+      if (key !== this.baseTextureKeys[side]) {
+        this.baseTextureKeys[side] = key;
+        this.bases[side].setTexture(key);
+      }
+    }
+  }
+
+  private drawActorOverlays(state: BattleState): void {
+    this.overlays.clear();
+    for (const unit of state.units) {
+      const actor = this.actors.get(unit.id);
+      if (!actor) continue;
+      const { x, y } = actor.sprite;
+      const definition = getUnitDefinition(unit.unitId);
+      const width = definition.heavy ? 43 : 38;
+      const barY = y - (definition.heavy ? 88 : 74);
+      const health = Phaser.Math.Clamp(unit.hp / unit.maxHp, 0, 1);
+      this.overlays.fillStyle(0x1b211f, 0.8).fillRoundedRect(x - width / 2, barY, width, 5, 2);
+      this.overlays.fillStyle(unit.side === 0 ? 0xa9d17e : 0xe38270).fillRoundedRect(x - width / 2, barY + 1, width * health, 3, 1);
+
+      if (unit.flashUntil > state.elapsed) {
+        const target = unit.targetId === null ? undefined : state.units.find((candidate) => candidate.id === unit.targetId);
+        const targetX = target ? target.x / WORLD_WIDTH * WIDTH : unit.side === 0 ? WIDTH - 150 : 150;
+        this.overlays.lineStyle(2, unit.side === 0 ? 0xffe5a4 : 0xffa18d, 0.45).lineBetween(x, y - 25, targetX, LANE_Y - 24);
+      }
+    }
   }
 }
 
-function tintTowardRed(color: number): number {
-  const red = color >> 16 & 0xff;
-  const green = color >> 8 & 0xff;
-  const blue = color & 0xff;
-  return (Math.min(255, Math.round(red * 0.8 + 190 * 0.2)) << 16)
-    | (Math.round(green * 0.55) << 8)
-    | Math.round(blue * 0.55);
+function actorTexture(unitId: UnitId, side: Side): string {
+  return `${unitId}-${side === 0 ? "friendly" : "enemy"}`;
+}
+
+function animationKey(unitId: UnitId, side: Side, clip: ClipName): string {
+  return `${actorTexture(unitId, side)}-${clip}`;
+}
+
+function baseTextureKey(side: Side, hp: number): string {
+  const condition: BaseCondition = hp <= 0 ? "ruin" : hp / BASE_MAX_HP <= 0.25 ? "critical" : hp / BASE_MAX_HP <= 0.6 ? "worn" : "intact";
+  return `base-${side === 0 ? "friendly" : "enemy"}-${condition}`;
 }

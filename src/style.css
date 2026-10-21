@@ -18,26 +18,14 @@ button { color: inherit; font: inherit; }
 .menu-screen {
   position: relative; display: flex; align-items: center; justify-content: flex-end;
   height: 100%; padding: 32px clamp(24px, 9vw, 140px); overflow-y: auto;
-  background: linear-gradient(90deg, rgb(12 20 25 / 8%), rgb(13 20 24 / 22%) 35%, rgb(14 20 24 / 88%) 69%, #11181d 100%),
-    linear-gradient(0deg, rgb(17 24 29 / 68%), transparent 55%);
+  background: linear-gradient(90deg, rgb(10 15 19 / 8%), rgb(12 18 22 / 23%) 34%, rgb(13 20 25 / 88%) 68%, #11181d 100%),
+    linear-gradient(0deg, rgb(17 24 29 / 56%), transparent 58%),
+    url("/assets/ui/home-world.webp") center / cover;
 }
 .loading-screen { display: grid; place-content: center; justify-items: center; gap: 9px; width: 100%; height: 100%; color: #e7dcc1; background: #111a20; }
 .loading-mark { color: #e2bd77; font-size: 27px; animation: loading-pulse 1s ease-in-out infinite alternate; }
 .loading-screen small { color: #89908a; font-size: 11px; }
 @keyframes loading-pulse { to { opacity: .35; transform: scale(.8); } }
-.menu-atmosphere { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.menu-atmosphere::before {
-  position: absolute; top: 16%; left: 12%; width: min(34vw, 430px); aspect-ratio: 1;
-  border: 1px solid rgb(231 190 118 / 24%); border-radius: 50%;
-  background: radial-gradient(circle, rgb(224 176 100 / 20%), rgb(224 176 100 / 4%) 55%, transparent 72%);
-  box-shadow: 0 0 100px rgb(228 174 97 / 17%); content: "";
-}
-.menu-atmosphere::after {
-  position: absolute; right: 37%; bottom: 9%; width: 50vw; height: 26vh;
-  background: linear-gradient(135deg, transparent 35%, rgb(112 122 87 / 29%) 35% 42%, transparent 42%),
-    linear-gradient(45deg, transparent 48%, rgb(145 112 74 / 25%) 48% 58%, transparent 58%);
-  content: "";
-}
 .menu-content { position: relative; z-index: 1; width: min(100%, 480px); padding: 20px 0; }
 .eyebrow, .roster-heading, .mission-topline, .menu-footnote { display: flex; align-items: center; }
 .eyebrow { gap: 10px; color: #d9b779; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; }
@@ -67,10 +55,10 @@ button { color: inherit; font: inherit; }
 .roster-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .preview-unit { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 9px 10px; border: 1px solid rgb(255 255 255 / 6%); border-radius: 8px; background: rgb(31 39 39 / 86%); }
 .unit-token {
-  display: inline-grid; flex: 0 0 auto; place-items: center; width: 31px; height: 31px;
-  border: 1px solid color-mix(in srgb, var(--unit-color), transparent 35%); border-radius: 8px;
-  color: var(--unit-color); background: color-mix(in srgb, var(--unit-color), #111a20 82%); font-size: 13px; font-weight: 800;
+  display: inline-grid; flex: 0 0 auto; place-items: center; width: 43px; height: 43px; overflow: hidden;
+  border: 1px solid rgb(230 196 137 / 22%); border-radius: 8px; background: radial-gradient(circle, rgb(233 213 173 / 12%), rgb(17 26 32 / 76%));
 }
+.unit-token img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .preview-unit-copy { display: grid; min-width: 0; gap: 2px; }
 .preview-unit-copy strong { overflow: hidden; color: #e7e2d5; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .preview-unit-copy small { color: #878f89; font-size: 9px; }
@@ -93,7 +81,7 @@ button { color: inherit; font: inherit; }
 .battle-title strong { font-size: 16px; }
 .header-actions { display: flex; justify-self: end; align-items: center; gap: 11px; }
 .gold-counter { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px; border: 1px solid rgb(226 188 116 / 22%); border-radius: 7px; background: rgb(26 31 29 / 83%); }
-.gold-glyph { color: #e2bb70; }
+.gold-icon { align-self: center; width: 16px; height: 16px; object-fit: contain; }
 .gold-counter strong { min-width: 28px; color: #f0d18e; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .gold-counter small { color: #9e9b8d; font-size: 9px; }
 .icon-button { width: 37px; height: 37px; border-radius: 7px; font-size: 15px; }
@@ -122,7 +110,7 @@ button { color: inherit; font: inherit; }
 .unit-card:hover:not(:disabled) { border-color: rgb(229 191 119 / 60%); }
 .unit-card:disabled { cursor: not-allowed; filter: saturate(.45) brightness(.78); }
 .unit-card-top, .unit-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.unit-card .unit-token { width: 28px; height: 28px; font-size: 12px; }
+.unit-card .unit-token { width: 38px; height: 38px; }
 .unit-key { color: #87918b; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .unit-card > strong { overflow: hidden; color: #e7e0d0; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .unit-card-bottom { color: #8f9890; font-size: 8px; white-space: nowrap; }
@@ -142,9 +130,8 @@ button { color: inherit; font: inherit; }
 .is-paused .battle-callout::after { margin-left: 4px; color: #e4bf79; content: "· 已暂停"; }
 
 @media (max-width: 760px) {
-  .menu-screen { justify-content: center; padding: 16px 18px; background: linear-gradient(90deg, rgb(14 20 24 / 72%), rgb(14 20 24 / 91%)); }
+  .menu-screen { justify-content: center; padding: 16px 18px; background: linear-gradient(90deg, rgb(14 20 24 / 76%), rgb(14 20 24 / 88%)), url("/assets/ui/home-world.webp") 34% center / cover; }
   .menu-content { max-width: 460px; }
-  .menu-atmosphere::before { top: 8%; left: 50%; width: 290px; transform: translateX(-50%); }
   .menu-content h1 { font-size: 52px; }
   .mission-card { padding: 18px; }
   .battle-header { min-height: 65px; padding: 10px 12px; }
@@ -162,7 +149,7 @@ button { color: inherit; font: inherit; }
   .unit-deck { bottom: 8px; width: calc(100% - 16px); padding: 9px 8px 6px; }
   .unit-cards { gap: 5px; }
   .unit-card { gap: 5px; padding: 7px 6px; }
-  .unit-card .unit-token { width: 24px; height: 24px; font-size: 10px; }
+  .unit-card .unit-token { width: 30px; height: 30px; }
   .unit-card > strong { font-size: 9px; }
   .unit-card-bottom { display: grid; gap: 3px; font-size: 7px; }
   .unit-card-bottom b { font-size: 8px; }
