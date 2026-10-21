@@ -29,6 +29,7 @@ export class GameApp {
   private readonly telemetry = new TelemetryReporter();
 
   constructor(private readonly root: HTMLElement, private readonly createGame: CreateGame) {
+    document.documentElement.style.setProperty("--studio-background", `url("${GAME_ASSETS.backgrounds[0].src}")`);
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
     this.telemetry.enter();
@@ -96,24 +97,29 @@ export class GameApp {
     this.root.innerHTML = `
       <section class="battle-ui" aria-label="需求永不眠项目现场">
         <header class="battle-header">
-          <button class="back-button" id="back-to-menu" aria-label="返回首页">← <span>项目列表</span></button>
-          <div class="battle-title"><span class="title-kicker">1024 AI 创作赛</span><strong>需求永不眠</strong></div>
+          <div class="header-identity">
+            <button class="back-button" id="back-to-menu" aria-label="返回首页">← <span>项目列表</span></button>
+            <div class="battle-title"><span class="title-kicker">1024 AI 创作赛</span><strong>需求永不眠</strong><small data-era-heading>手搓时代</small></div>
+          </div>
+          <div class="header-goal">
+            <div class="deadline-clock"><span>距离上线</span><strong data-time>05:00</strong></div>
+            <div class="goal-progress"><span data-goal-label>验收需求</span><strong data-goal-value>0 / 11</strong><i class="goal-track"><i data-goal-bar></i></i></div>
+          </div>
           <div class="header-actions">
             <div class="metric-pill budget-pill"><img class="metric-icon" src="${GAME_ASSETS.icons.budget.src}" alt="" aria-hidden="true"><strong data-budget>145</strong><small>预算</small></div>
             <div class="metric-pill exp-pill"><img class="metric-icon" src="${GAME_ASSETS.icons.experience.src}" alt="" aria-hidden="true"><strong data-exp>0</strong><small>经验</small></div>
+            <div class="project-status left-status">
+              <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.stability.src}" alt="" aria-hidden="true">健康</span><strong data-health-label>100%</strong></div>
+              <span class="status-track"><i data-health-bar></i></span>
+            </div>
+            <div class="project-status right-status">
+              <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.techDebt.src}" alt="" aria-hidden="true">技术债</span><strong data-debt-label>0</strong></div>
+              <span class="status-track debt-track"><i data-debt-bar></i></span>
+            </div>
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
         </header>
 
-        <div class="deadline-clock"><span>上线倒计时</span><strong data-time>05:00</strong></div>
-        <div class="project-status left-status">
-          <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.stability.src}" alt="" aria-hidden="true">项目健康</span><strong data-health-label>100%</strong></div>
-          <span class="status-track"><i data-health-bar></i></span>
-        </div>
-        <div class="project-status right-status">
-          <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.techDebt.src}" alt="" aria-hidden="true">技术债</span><strong data-debt-label>0</strong></div>
-          <span class="status-track debt-track"><i data-debt-bar></i></span>
-        </div>
         <div class="tutorial-callout" data-tutorial role="status" aria-live="polite"></div>
         <div class="battle-notice" data-notice role="status" aria-live="polite"></div>
 
@@ -128,13 +134,12 @@ export class GameApp {
         </div>
 
         <section class="unit-deck" aria-label="招聘工程师">
-          <div class="deck-heading"><span><i class="heading-pixel"></i>组建交付小组</span><small data-era-heading>手搓时代</small></div>
+          <div class="deck-heading"><span><i class="heading-pixel"></i>研发团队</span><small>快捷键 1–5 招募 · 角色悬停查看专长</small></div>
           <div class="unit-cards">${ENGINEER_DEFS.map((engineer, index) => `
-            <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算">
-              <span class="unit-card-top"><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"><span class="unit-key">${index + 1}</span></span>
+            <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算" title="${engineer.summary}">
+              <span class="unit-card-top"><span class="unit-key">0${index + 1}</span><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"></span>
               <strong>${engineer.name}</strong>
-              <span class="unit-card-bottom"><span>${engineer.summary}</span><b>◈ ${engineer.cost}</b></span>
-              <small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small>
+              <span class="unit-card-bottom"><small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small><b><span aria-hidden="true">◈</span> ${engineer.cost}</b></span>
             </button>`).join("")}
           </div>
           <div class="deck-footer">
@@ -244,6 +249,7 @@ export class GameApp {
     this.consumeTelemetry(state);
     const timeLeft = Math.max(0, Math.ceil(ROUND_DURATION - state.elapsed));
     this.setText("[data-time]", `${String(Math.floor(timeLeft / 60)).padStart(2, "0")}:${String(timeLeft % 60).padStart(2, "0")}`);
+    this.root.classList.toggle("is-deadline", timeLeft <= 30);
     this.setText("[data-budget]", Math.floor(state.budget).toString());
     this.setText("[data-exp]", Math.floor(state.experience).toString());
     this.setText("[data-health-label]", `${Math.ceil(state.projectHealth)}%`);
@@ -252,6 +258,15 @@ export class GameApp {
     this.setText("[data-open-requests]", `待办 ${state.requests.length}`);
     this.setText("[data-era-heading]", ERAS[state.techEra].name);
     this.setText("[data-tutorial]", tutorialText(state));
+    const finalRequest = state.requests.find((request) => request.isFinal);
+    const completedRequests = state.telemetry.filter((event) => event.type === "request_complete" && event.detail.request !== "GO-LIVE").length;
+    const finalComplete = state.telemetry.some((event) => event.type === "request_complete" && event.detail.request === "GO-LIVE");
+    const goalProgress = finalRequest
+      ? 1 - finalRequest.remainingWork / finalRequest.totalWork
+      : finalComplete ? 1 : Math.min(completedRequests / 11, 1);
+    this.setText("[data-goal-label]", finalRequest || finalComplete ? "最终需求" : "验收需求");
+    this.setText("[data-goal-value]", finalRequest ? `GO-LIVE ${Math.round((1 - finalRequest.remainingWork / finalRequest.totalWork) * 100)}%` : finalComplete ? "GO-LIVE ✓" : `${Math.min(completedRequests, 11)} / 11`);
+    this.updateBar("[data-goal-bar]", goalProgress);
     this.updateBar("[data-health-bar]", state.projectHealth / MAX_PROJECT_HEALTH);
     this.updateBar("[data-debt-bar]", state.techDebt / 200);
     this.root.querySelector(".battle-ui")?.setAttribute("data-era", String(state.techEra));
@@ -267,12 +282,14 @@ export class GameApp {
       const locked = engineer.era > state.techEra;
       const full = state.engineers.length + state.queue.length >= MAX_POPULATION || state.queue.length >= MAX_TRAINING_QUEUE;
       const insufficient = state.budget < engineer.cost;
+      const order = state.queue.find((queued) => queued.role === engineer.id);
       button.disabled = state.phase !== "running" || locked || full;
       button.classList.toggle("is-locked", locked);
       button.classList.toggle("is-insufficient", insufficient && !locked && !full);
-      button.title = locked ? `${ERAS[engineer.era].name}解锁` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(engineer.cost - state.budget)}` : engineer.summary;
+      button.classList.toggle("is-training", Boolean(order));
+      button.title = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中，还需 ${order.remaining.toFixed(1)} 秒` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(engineer.cost - state.budget)}` : engineer.summary;
       const stateLabel = button.querySelector<HTMLElement>("[data-role-state]");
-      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : insufficient ? `预算不足 · ${engineer.cost}` : `交付 ${engineer.workRate}/秒`;
+      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中 ${order.remaining.toFixed(1)}s` : insufficient ? "预算不足" : `交付 ${engineer.workRate}/秒`;
     }
 
     const nextEra = getNextEra(state);

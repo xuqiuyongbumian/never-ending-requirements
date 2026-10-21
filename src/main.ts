@@ -14,9 +14,9 @@ new GameApp(overlay, async (updateHud) => {
     parent: "stage",
     width: 1280,
     height: 720,
-    backgroundColor: "#111a20",
+    backgroundColor: "#191c31",
     scale: {
-      mode: Phaser.Scale.FIT,
+      mode: window.innerWidth / window.innerHeight < 1 ? Phaser.Scale.FIT : Phaser.Scale.ENVELOP,
       autoCenter: Phaser.Scale.CENTER_BOTH
     },
     scene: [BattleScene]

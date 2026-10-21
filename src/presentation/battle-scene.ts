@@ -65,7 +65,7 @@ export class BattleScene extends Phaser.Scene {
     this.drawLane();
     for (const [x, label] of [[160, "研发中心"], [1120, "需求入口"]] as const) {
       this.add.text(x, FLOOR_Y - 18, label, {
-        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff6da", backgroundColor: "#365c57"
+        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
       }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(2);
     }
     this.lastHudUpdate = 0;
@@ -116,8 +116,8 @@ export class BattleScene extends Phaser.Scene {
       let view = this.engineers.get(engineer.id);
       if (!view) {
         const image = this.add.image(0, FLOOR_Y, engineerTexture(engineer.role)).setOrigin(0.5, 1).setDepth(5);
-        const maxHeight = engineer.role === "agent" ? 105 : 96;
-        const baseScale = Math.min(maxHeight / image.height, 118 / image.width);
+        const maxHeight = engineer.role === "agent" ? 132 : 120;
+        const baseScale = Math.min(maxHeight / image.height, 138 / image.width);
         image.setScale(baseScale);
         view = {
           image,
@@ -125,7 +125,7 @@ export class BattleScene extends Phaser.Scene {
           aura: this.add.graphics().setDepth(4.5),
           activity: this.add.text(0, 0, "</>", {
             fontFamily: "ui-monospace, monospace", fontSize: "15px", fontStyle: "bold",
-            color: engineer.role === "agent" ? "#6776e7" : "#248d78", stroke: "#fff8de", strokeThickness: 4
+            color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
           }).setOrigin(0.5).setDepth(6).setVisible(false),
           baseScale
         };
@@ -161,10 +161,10 @@ export class BattleScene extends Phaser.Scene {
       view.aura.fillStyle(0x66d9fa, 0.13).fillEllipse(x, FLOOR_Y - 48 + bob, 78, 92);
       view.aura.fillStyle(0x9c9bff, 0.2).fillCircle(x + Math.sin(state.elapsed * 2 + engineer.id) * 25, FLOOR_Y - 85 + bob, 2.5);
     }
-    view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 123 : 112) + bob);
+    view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + bob);
     if (working && engineer.role === "agent") view.activity.setText("AI");
     else if (working) view.activity.setText("</>");
-    view.activity.setColor(engineer.role === "agent" ? "#6776e7" : `#${definition.color.toString(16).padStart(6, "0")}`);
+    view.activity.setColor(engineer.role === "agent" ? "#a9a8ff" : `#${definition.color.toString(16).padStart(6, "0")}`);
   }
 
   private syncRequests(state: BattleState): void {
@@ -189,9 +189,9 @@ export class BattleScene extends Phaser.Scene {
     const plate = this.add.graphics();
     const mascot = this.add.image(-68, 0, requestTexture(request)).setOrigin(0.5);
     mascot.setScale(Math.min(68 / mascot.width, 68 / mascot.height));
-    const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "11px", color: "#25353b", fontStyle: "bold" }).setOrigin(0, 0.5);
-    const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "8px", color: "#526168" }).setOrigin(0, 0.5);
-    const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "8px", color: "#526168", fontStyle: "bold" }).setOrigin(1, 0.5);
+    const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "11px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
+    const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "8px", color: "#b4bbcc" }).setOrigin(0, 0.5);
+    const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "8px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
     const progress = this.add.graphics();
     const container = this.add.container(0, 0, [plate, mascot, title, code, remaining, progress]).setDepth(request.isFinal ? 4 : 3);
     return { container, plate, mascot, title, code, remaining, progress, requestCode: request.code };
@@ -207,12 +207,13 @@ export class BattleScene extends Phaser.Scene {
     view.code.setText(request.isFinal ? "P0 · RELEASE" : `${request.code} · ${request.kind.toUpperCase()}`);
     view.remaining.setText(`${Math.ceil(request.remainingWork)} 工时`);
     view.plate.clear();
-    view.plate.fillStyle(0x25353b, 0.3).fillRect(-55, -22, 151, 49);
-    view.plate.fillStyle(0xfff9e8, 0.97).fillRect(-55, -26, 151, 49);
+    view.plate.fillStyle(0x191c31, 0.82).fillRect(-55, -22, 151, 49);
+    view.plate.fillStyle(0x282b43, 0.96).fillRect(-55, -26, 151, 49);
     view.plate.fillStyle(accent).fillRect(-55, -26, 151, 4);
-    view.plate.fillStyle(0x61746f, 0.17).fillRect(-39, 11, 123, 2);
+    view.plate.lineStyle(1, accent, 0.6).strokeRect(-55, -26, 151, 49);
+    view.plate.fillStyle(0xb4bbcc, 0.25).fillRect(-39, 11, 123, 2);
     view.progress.clear();
-    view.progress.fillStyle(0xc9d3c1).fillRect(-39, 14, 123, 5);
+    view.progress.fillStyle(0x555a73).fillRect(-39, 14, 123, 5);
     view.progress.fillStyle(accent).fillRect(-39, 14, 123 * (1 - request.remainingWork / request.totalWork), 5);
   }
 
