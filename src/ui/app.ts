@@ -16,6 +16,7 @@ import {
   type BattleState,
   type EngineerId
 } from "../core/game";
+import { GAME_ASSETS } from "../presentation/game-assets";
 import { TelemetryReporter } from "./telemetry";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
@@ -98,19 +99,19 @@ export class GameApp {
           <button class="back-button" id="back-to-menu" aria-label="返回首页">← <span>项目列表</span></button>
           <div class="battle-title"><span class="title-kicker">1024 AI 创作赛</span><strong>需求永不眠</strong></div>
           <div class="header-actions">
-            <div class="metric-pill budget-pill"><span class="metric-glyph">$</span><strong data-budget>145</strong><small>预算</small></div>
-            <div class="metric-pill exp-pill"><span class="metric-glyph">✦</span><strong data-exp>0</strong><small>经验</small></div>
+            <div class="metric-pill budget-pill"><img class="metric-icon" src="${GAME_ASSETS.icons.budget.src}" alt="" aria-hidden="true"><strong data-budget>145</strong><small>预算</small></div>
+            <div class="metric-pill exp-pill"><img class="metric-icon" src="${GAME_ASSETS.icons.experience.src}" alt="" aria-hidden="true"><strong data-exp>0</strong><small>经验</small></div>
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
         </header>
 
         <div class="deadline-clock"><span>上线倒计时</span><strong data-time>05:00</strong></div>
         <div class="project-status left-status">
-          <div class="status-copy"><span>项目健康</span><strong data-health-label>100%</strong></div>
+          <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.stability.src}" alt="" aria-hidden="true">项目健康</span><strong data-health-label>100%</strong></div>
           <span class="status-track"><i data-health-bar></i></span>
         </div>
         <div class="project-status right-status">
-          <div class="status-copy"><span>技术债</span><strong data-debt-label>0</strong></div>
+          <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.techDebt.src}" alt="" aria-hidden="true">技术债</span><strong data-debt-label>0</strong></div>
           <span class="status-track debt-track"><i data-debt-bar></i></span>
         </div>
         <div class="tutorial-callout" data-tutorial role="status" aria-live="polite"></div>
@@ -130,7 +131,7 @@ export class GameApp {
           <div class="deck-heading"><span><i class="heading-pixel"></i>组建交付小组</span><small data-era-heading>手搓时代</small></div>
           <div class="unit-cards">${ENGINEER_DEFS.map((engineer, index) => `
             <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算">
-              <span class="unit-card-top"><span class="pixel-avatar role-${engineer.id}" aria-hidden="true"><i></i><b></b></span><span class="unit-key">${index + 1}</span></span>
+              <span class="unit-card-top"><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"><span class="unit-key">${index + 1}</span></span>
               <strong>${engineer.name}</strong>
               <span class="unit-card-bottom"><span>${engineer.summary}</span><b>◈ ${engineer.cost}</b></span>
               <small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small>
@@ -143,7 +144,7 @@ export class GameApp {
         </section>
 
         <section class="change-panel" data-change-panel aria-modal="true" role="dialog" hidden>
-          <div class="change-stamp">需求变更</div>
+          <div class="change-stamp"><img class="event-icon" src="${GAME_ASSETS.icons.event.src}" alt="" aria-hidden="true">需求变更</div>
           <span class="change-kicker">产品 / 运营 / 线上事件</span>
           <h2 data-change-title></h2>
           <p data-change-body></p>
