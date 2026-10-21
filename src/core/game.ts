@@ -17,11 +17,11 @@ export interface EngineerDefinition {
 }
 
 export const ENGINEER_DEFS: readonly EngineerDefinition[] = [
-  { id: "intern", name: "实习生", era: 0, cost: 35, workRate: 8, moveSpeed: 58, workRange: 70, trainingTime: 2.2, focus: "any", color: 0xf5c46a, summary: "稳定处理基础事项" },
-  { id: "frontend", name: "前端工程师", era: 0, cost: 55, workRate: 15, moveSpeed: 62, workRange: 82, trainingTime: 2.8, focus: "feature", color: 0x59c4bb, summary: "功能需求效率 +35%" },
-  { id: "backend", name: "后端工程师", era: 1, cost: 70, workRate: 20, moveSpeed: 54, workRange: 75, trainingTime: 3.2, focus: "infra", color: 0x75a8e7, summary: "基础设施效率 +35%" },
-  { id: "qa", name: "测试工程师", era: 1, cost: 62, workRate: 15, moveSpeed: 57, workRange: 90, trainingTime: 2.9, focus: "bug", color: 0xbc9be7, summary: "缺陷需求效率 +50%" },
-  { id: "agent", name: "AI Agent", era: 2, cost: 95, workRate: 34, moveSpeed: 70, workRange: 108, trainingTime: 3.5, focus: "any", color: 0xf28d72, summary: "高速交付，同时增加技术债" }
+  { id: "intern", name: "实习生", era: 0, cost: 35, workRate: 8, moveSpeed: 58, workRange: 70, trainingTime: 2.2, focus: "any", color: 0xf5c46a, summary: "全领域基础支持" },
+  { id: "frontend", name: "前端工程师", era: 0, cost: 55, workRate: 15, moveSpeed: 62, workRange: 82, trainingTime: 2.8, focus: "feature", color: 0x59c4bb, summary: "功能需求效率 +35%；跨领域效率 58%" },
+  { id: "backend", name: "后端工程师", era: 1, cost: 70, workRate: 20, moveSpeed: 54, workRange: 75, trainingTime: 3.2, focus: "infra", color: 0x75a8e7, summary: "基础设施效率 +35%；跨领域效率 58%" },
+  { id: "qa", name: "测试工程师", era: 1, cost: 62, workRate: 15, moveSpeed: 57, workRange: 90, trainingTime: 2.9, focus: "bug", color: 0xbc9be7, summary: "缺陷需求效率 +50%；跨领域效率 58%" },
+  { id: "agent", name: "AI Agent", era: 2, cost: 95, workRate: 34, moveSpeed: 70, workRange: 108, trainingTime: 3.5, focus: "any", color: 0xf28d72, summary: "全领域高速交付，同时增加技术债" }
 ];
 
 export interface EraDefinition {
@@ -108,6 +108,11 @@ export interface BattleState {
   pendingEvent: ChangeEvent | null;
   tutorialStep: number;
   rushUntil: number;
+  shipItUntil: number;
+  shipItCooldownUntil: number;
+  prioritizedRequestId: number | null;
+  priorityEngineerIds: number[];
+  priorityCooldownUntil: number;
   incidentUntil: number;
   nextIncidentAt: number;
   accumulator: number;
@@ -125,6 +130,13 @@ export const MAX_POPULATION = 16;
 export const MAX_TRAINING_QUEUE = 5;
 export const REQUEST_ENTRY_X = 1510;
 export const BASE_FRONT_EDGE = 365;
+export const SHIP_IT_DURATION = 12;
+export const SHIP_IT_COOLDOWN = 45;
+export const SHIP_IT_DEBT_COST = 25;
+export const SHIP_IT_WORK_BONUS = 0.4;
+export const PRIORITY_COOLDOWN = 8;
+export const REPEAT_ROLE_COST_STEP = 0.8;
+const WORKING_REQUEST_SPEED_MULTIPLIER = 0.55;
 const GOLD_PER_SECOND = 1.5;
 const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
@@ -188,13 +200,28 @@ export const CHANGE_EVENTS: readonly ChangeEvent[] = [
 
 const definitionById = new Map(ENGINEER_DEFS.map((definition) => [definition.id, definition]));
 
+function eventTimeAt(index: number, seed: number): number {
+  const base = EVENT_SPAWN_TIMES[index];
+  if (base === undefined) return Number.POSITIVE_INFINITY;
+  const offset = (nextRandom(seed) % 9) - 4;
+  return base + offset;
+}
+
 export function getEngineerDefinition(id: EngineerId): EngineerDefinition {
   const definition = definitionById.get(id);
   if (!definition) throw new Error(`Unknown engineer role: ${id}`);
   return definition;
 }
 
+export function getEngineerCost(state: BattleState, role: EngineerId): number {
+  const definition = getEngineerDefinition(role);
+  const roleCount = state.engineers.filter((engineer) => engineer.role === role).length + state.queue.filter((order) => order.role === role).length;
+  const repeatedHires = Math.max(0, roleCount - (role === "intern" ? 1 : 0));
+  return Math.ceil((definition.cost * (1 + repeatedHires * REPEAT_ROLE_COST_STEP)) / 5) * 5;
+}
+
 export function createBattle(seed = 1024): BattleState {
+  const normalizedSeed = seed >>> 0 || 1;
   return {
     phase: "running",
     elapsed: 0,
@@ -210,11 +237,16 @@ export function createBattle(seed = 1024): BattleState {
     nextRequestId: 1,
     requestScheduleIndex: 0,
     eventScheduleIndex: 0,
-    nextEventAt: EVENT_SPAWN_TIMES[0],
-    randomSeed: seed >>> 0 || 1,
+    nextEventAt: eventTimeAt(0, normalizedSeed),
+    randomSeed: normalizedSeed,
     pendingEvent: null,
     tutorialStep: 0,
     rushUntil: 0,
+    shipItUntil: 0,
+    shipItCooldownUntil: 0,
+    prioritizedRequestId: null,
+    priorityEngineerIds: [],
+    priorityCooldownUntil: 0,
     incidentUntil: 0,
     nextIncidentAt: 115,
     accumulator: 0,
@@ -241,15 +273,16 @@ export function hireEngineer(state: BattleState, role: EngineerId): boolean {
     setNotice(state, `团队人数已达上限（${MAX_POPULATION}）`);
     return false;
   }
-  if (state.budget < definition.cost) {
-    setNotice(state, `预算不足，还差${Math.ceil(definition.cost - state.budget)}`);
+  const hireCost = getEngineerCost(state, role);
+  if (state.budget < hireCost) {
+    setNotice(state, `预算不足，还差${Math.ceil(hireCost - state.budget)}`);
     return false;
   }
-  state.budget -= definition.cost;
+  state.budget -= hireCost;
   state.queue.push({ role, remaining: definition.trainingTime, total: definition.trainingTime });
   state.tutorialStep = Math.max(state.tutorialStep, 1);
   setNotice(state, `${definition.name}已加入招聘队列`);
-  emitTelemetry(state, "recruit", { role, cost: definition.cost, budget: Math.floor(state.budget) });
+  emitTelemetry(state, "recruit", { role, cost: hireCost, budget: Math.floor(state.budget) });
   return true;
 }
 
@@ -315,8 +348,112 @@ export function chooseChange(state: BattleState, choiceId: string): boolean {
       addTechDebt(state, -18, "人工复核 Agent 输出");
       break;
   }
+  const chosen = event.choices.find((choice) => choice.id === choiceId);
+  if (chosen) setNotice(state, `${chosen.label}：${chosen.description}`);
   state.tutorialStep = Math.max(state.tutorialStep, 2);
   emitTelemetry(state, "event_choice", { event: eventId, choice: choiceId, budget: Math.floor(state.budget), experience: Math.floor(state.experience), techDebt: Math.floor(state.techDebt) });
+  return true;
+}
+
+export function prioritizeRequirement(state: BattleState, requirementId: number): boolean {
+  if (state.phase !== "running") return false;
+  if (state.pendingEvent) {
+    setNotice(state, "请先处理当前需求变更，再调整优先级");
+    return false;
+  }
+  const request = state.requests.find((candidate) => candidate.id === requirementId);
+  if (!request) {
+    setNotice(state, "这项需求已不在待办中");
+    return false;
+  }
+  if (state.elapsed < state.priorityCooldownUntil) {
+    setNotice(state, `调度冷却中，还需 ${Math.ceil(state.priorityCooldownUntil - state.elapsed)} 秒`);
+    return false;
+  }
+
+  const workingCounts = new Map<number, number>();
+  for (const engineer of state.engineers) {
+    if (engineer.action === "working" && engineer.targetRequestId !== null) {
+      workingCounts.set(engineer.targetRequestId, (workingCounts.get(engineer.targetRequestId) ?? 0) + 1);
+    }
+  }
+  const candidates = state.engineers.filter((engineer) =>
+    engineer.action !== "working" || engineer.targetRequestId === requirementId ||
+    (engineer.targetRequestId !== null && (workingCounts.get(engineer.targetRequestId) ?? 0) > 1) ||
+    state.engineers.length > 1
+  );
+  if (candidates.length === 0) {
+    setNotice(state, "团队正在处理其他需求，暂时没有可调度工程师");
+    return false;
+  }
+
+  const previousPriorityId = state.prioritizedRequestId;
+  if (previousPriorityId !== null) {
+    for (const engineerId of state.priorityEngineerIds) {
+      const engineer = state.engineers.find((candidate) => candidate.id === engineerId);
+      if (engineer?.targetRequestId === previousPriorityId) engineer.targetRequestId = null;
+    }
+  }
+
+  const ranked = candidates
+    .map((engineer) => {
+      const definition = getEngineerDefinition(engineer.role);
+      const focusBonus = definition.focus === "any"
+        ? 1
+        : definition.focus === request.kind
+          ? (definition.id === "qa" ? 1.5 : 1.35)
+          : 0.58;
+      const arrival = Math.max(0, Math.abs(request.x - engineer.x) - definition.workRange) / definition.moveSpeed;
+      const estimate = arrival + request.remainingWork / Math.max(1, definition.workRate * focusBonus * ERAS[state.techEra].productivity);
+      return { engineer, score: estimate };
+    })
+    .sort((a, b) => a.score - b.score);
+  const assignmentCount = Math.min(candidates.length, 3, Math.max(1, Math.ceil(state.engineers.length * 0.25)));
+  const assigned = ranked.slice(0, assignmentCount).map(({ engineer }) => engineer);
+  const interruptedRequests = [...new Set(assigned
+    .map((engineer) => state.requests.find((candidate) => candidate.id === engineer.targetRequestId))
+    .filter((candidate): candidate is Requirement => Boolean(candidate && candidate.id !== request.id))
+    .map((candidate) => candidate.code))];
+
+  state.prioritizedRequestId = request.id;
+  state.priorityEngineerIds = assigned.map((engineer) => engineer.id);
+  state.priorityCooldownUntil = state.elapsed + PRIORITY_COOLDOWN;
+  for (const engineer of assigned) engineer.targetRequestId = request.id;
+
+  const names = assigned.map((engineer) => getEngineerDefinition(engineer.role).name).join("、");
+  setNotice(state, `${request.code} 已设为优先需求　调度：${names}${interruptedRequests.length ? `　暂缓：${interruptedRequests.join("、")}` : ""}`);
+  emitTelemetry(state, "requirement_prioritized", {
+    requirement: request.code,
+    requirementId: request.id,
+    kind: request.kind,
+    engineers: assigned.length,
+    roles: assigned.map((engineer) => engineer.role).join(","),
+    deferred: interruptedRequests.join(",")
+  });
+  return true;
+}
+
+export function activateShipIt(state: BattleState): boolean {
+  if (state.phase !== "running" || state.paused) return false;
+  if (state.pendingEvent) {
+    setNotice(state, "请先处理当前需求变更，再使用极限冲刺");
+    return false;
+  }
+  if (state.elapsed < state.shipItCooldownUntil) {
+    setNotice(state, `极限冲刺冷却中，还需 ${Math.ceil(state.shipItCooldownUntil - state.elapsed)} 秒`);
+    return false;
+  }
+
+  state.shipItUntil = state.elapsed + SHIP_IT_DURATION;
+  state.shipItCooldownUntil = state.elapsed + SHIP_IT_COOLDOWN;
+  addTechDebt(state, SHIP_IT_DEBT_COST, "使用极限冲刺");
+  setNotice(state, `极限冲刺启动：${SHIP_IT_DURATION} 秒内处理效率 +${Math.round(SHIP_IT_WORK_BONUS * 100)}%`);
+  emitTelemetry(state, "rush_activated", {
+    duration: SHIP_IT_DURATION,
+    workBonus: SHIP_IT_WORK_BONUS,
+    techDebt: SHIP_IT_DEBT_COST,
+    cooldown: SHIP_IT_COOLDOWN
+  });
   return true;
 }
 
@@ -331,6 +468,11 @@ export function advanceBattle(state: BattleState, frameDelta: number): void {
 
 function stepBattle(state: BattleState, delta: number): void {
   state.elapsed += delta;
+  if (state.shipItUntil > 0 && state.elapsed >= state.shipItUntil) {
+    state.shipItUntil = 0;
+    setNotice(state, "极限冲刺结束，团队恢复常规节奏");
+    emitTelemetry(state, "rush_completed", { duration: SHIP_IT_DURATION });
+  }
   state.budget = Math.min(9999, state.budget + GOLD_PER_SECOND * delta);
   advanceHiring(state, delta);
   spawnScheduledRequests(state);
@@ -379,16 +521,17 @@ function triggerChangeEvent(state: BattleState): void {
   const event = CHANGE_EVENTS[state.randomSeed % CHANGE_EVENTS.length];
   state.pendingEvent = event;
   state.eventScheduleIndex += 1;
-  state.nextEventAt = EVENT_SPAWN_TIMES[state.eventScheduleIndex] ?? Number.POSITIVE_INFINITY;
+  state.nextEventAt = eventTimeAt(state.eventScheduleIndex, state.randomSeed);
   emitTelemetry(state, "change_event", { event: event.id });
 }
 
 function updateRequests(state: BattleState, delta: number): void {
   for (const request of [...state.requests]) {
     const beingWorked = state.engineers.some((engineer) => engineer.targetRequestId === request.id && engineer.action === "working");
-    if (!beingWorked) request.x -= request.speed * delta;
+    request.x -= request.speed * (beingWorked ? WORKING_REQUEST_SPEED_MULTIPLIER : 1) * delta;
     if (request.x <= BASE_FRONT_EDGE) {
       state.requests = state.requests.filter((candidate) => candidate.id !== request.id);
+      clearPriorityTarget(state, request.id);
       state.projectHealth = Math.max(0, state.projectHealth - request.severity);
       setNotice(state, `${request.code} 超过响应时限，项目健康 -${request.severity}`);
       emitTelemetry(state, "request_missed", { request: request.code, severity: request.severity, projectHealth: state.projectHealth });
@@ -399,9 +542,13 @@ function updateRequests(state: BattleState, delta: number): void {
 
 function updateEngineers(state: BattleState, delta: number): void {
   for (const engineer of state.engineers) {
+    if (state.phase !== "running") return;
     let request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
     if (!request) {
-      request = [...state.requests].sort((a, b) => Math.abs(a.x - engineer.x) - Math.abs(b.x - engineer.x))[0];
+      if (state.prioritizedRequestId !== null && state.priorityEngineerIds.includes(engineer.id)) {
+        request = state.requests.find((candidate) => candidate.id === state.prioritizedRequestId);
+      }
+      request ??= [...state.requests].sort((a, b) => Math.abs(a.x - engineer.x) - Math.abs(b.x - engineer.x))[0];
       engineer.targetRequestId = request?.id ?? null;
     }
     if (!request) {
@@ -419,10 +566,16 @@ function updateEngineers(state: BattleState, delta: number): void {
     }
 
     engineer.action = "working";
-    const focusBonus = definition.focus === request.kind ? (definition.id === "qa" ? 1.5 : 1.35) : 1;
+    const focusBonus = definition.focus === "any"
+      ? 1
+      : definition.focus === request.kind
+        ? (definition.id === "qa" ? 1.5 : 1.35)
+        : 0.58;
     const debtPenalty = state.techDebt <= 60 ? 1 : 1 - Math.min(0.42, (state.techDebt - 60) * 0.0035);
     const eraBonus = ERAS[state.techEra].productivity;
-    const rushBonus = state.elapsed < state.rushUntil ? 1.55 : 1;
+    const eventRushBonus = state.elapsed < state.rushUntil ? 1.55 : 1;
+    const shipItBonus = state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
+    const rushBonus = Math.max(eventRushBonus, shipItBonus);
     const incidentPenalty = state.elapsed < state.incidentUntil ? 0.55 : 1;
     const work = definition.workRate * focusBonus * debtPenalty * eraBonus * rushBonus * incidentPenalty * delta;
     request.remainingWork = Math.max(0, request.remainingWork - work);
@@ -437,6 +590,7 @@ function completeRequirement(state: BattleState, request: Requirement): void {
   state.budget = Math.min(9999, state.budget + request.budgetReward);
   state.experience = Math.min(9999, state.experience + request.experienceReward);
   state.tutorialStep = Math.max(state.tutorialStep, 2);
+  clearPriorityTarget(state, request.id);
   for (const engineer of state.engineers) if (engineer.targetRequestId === request.id) engineer.targetRequestId = null;
   if (request.agentWork > 0) addTechDebt(state, Math.max(1, Math.round(request.agentWork * 0.08)), "AI Agent 交付");
   if (request.kind === "bug" && state.engineers.some((engineer) => engineer.role === "qa" && engineer.action === "working")) {
@@ -480,8 +634,21 @@ function endBattle(state: BattleState, phase: Exclude<GamePhase, "running">, rea
   if (state.phase !== "running") return;
   state.phase = phase;
   state.paused = true;
+  if (state.shipItUntil > state.elapsed) {
+    const startedAt = state.shipItCooldownUntil - SHIP_IT_COOLDOWN;
+    emitTelemetry(state, "rush_completed", { duration: Math.max(0, state.elapsed - startedAt), interrupted: true });
+    state.shipItUntil = 0;
+  }
+  state.prioritizedRequestId = null;
+  state.priorityEngineerIds = [];
   setNotice(state, reason);
   emitTelemetry(state, "result", { result: phase, reason, elapsed: Math.floor(state.elapsed), era: ERAS[state.techEra].name, projectHealth: state.projectHealth, techDebt: state.techDebt });
+}
+
+function clearPriorityTarget(state: BattleState, requestId: number): void {
+  if (state.prioritizedRequestId !== requestId) return;
+  state.prioritizedRequestId = null;
+  state.priorityEngineerIds = [];
 }
 
 function emitTelemetry(state: BattleState, type: string, detail: GameTelemetryEvent["detail"]): void {
@@ -503,9 +670,13 @@ export function getNextEra(state: BattleState): EraDefinition | null {
 }
 
 export function tutorialText(state: BattleState): string {
-  if (state.tutorialStep === 0) return "先招聘一名前端工程师：需求会从右侧进入，团队会自动接单。";
-  if (state.tutorialStep === 1) return "工程师正在处理需求。验收后获得预算和技术经验，按 E 可升级时代。";
-  if (state.tutorialStep === 2) return "需求变更会暂停交付等待选择；快速方案更快，但会增加技术债。";
+  if (state.prioritizedRequestId !== null) {
+    const request = state.requests.find((candidate) => candidate.id === state.prioritizedRequestId);
+    if (request) return `${request.code} 已列为优先需求，专长工程师会优先处理。需要冲一波时按 R（效率 +40%，技术债 +25）。`;
+  }
+  if (state.tutorialStep === 0) return "先招聘一名前端工程师。需求处理时仍会缓慢逼近；点重要任务卡调度专人。按 R 冲刺 12 秒（效率 +40%，技术债 +25）。";
+  if (state.tutorialStep === 1) return "专长角色效率更高；同岗位重复招聘会涨价。点击需求卡可调整优先级，验收得预算和经验，按 E 升级时代。";
+  if (state.tutorialStep === 2) return "需求变更会暂停交付等待选择；快速方案更快但增加技术债，冲刺也要承担债务。";
   if (state.tutorialStep === 3) return "留意项目健康与技术债，在 5:00 截止前完成最终上线需求。";
   return "按时交付 GO-LIVE，平衡团队效率、预算和技术债。";
 }

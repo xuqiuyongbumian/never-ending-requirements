@@ -1,15 +1,21 @@
 import type Phaser from "phaser";
 import {
+  activateShipIt,
   chooseChange,
   createBattle,
   ENGINEER_DEFS,
   ERAS,
+  getEngineerCost,
   getEngineerDefinition,
   getNextEra,
   hireEngineer,
   MAX_POPULATION,
   MAX_PROJECT_HEALTH,
   MAX_TRAINING_QUEUE,
+  SHIP_IT_COOLDOWN,
+  SHIP_IT_DEBT_COST,
+  SHIP_IT_DURATION,
+  SHIP_IT_WORK_BONUS,
   ROUND_DURATION,
   tutorialText,
   upgradeEra,
@@ -51,7 +57,7 @@ export class GameApp {
           <article class="mission-card">
             <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
             <h2>需求永不眠：1024 极限上线</h2>
-            <p>需求会从右侧逼近项目现场。工程师自动接单；完成后获得预算和技术经验。管理技术债，赶在 05:00 前完成 GO-LIVE。</p>
+            <p>需求会从右侧逼近，处理时也不会停下。专长角色处理更快，同岗位重复招聘成本会上升。点击任务卡调度，按 R 冲刺 12 秒（效率 +40%，技术债 +25）。</p>
             <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
             <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
           </article>
@@ -140,12 +146,17 @@ export class GameApp {
             <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算" title="${engineer.summary}">
               <span class="unit-card-top"><span class="unit-key">0${index + 1}</span><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"></span>
               <strong>${engineer.name}</strong>
-              <span class="unit-card-bottom"><small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small><b><span aria-hidden="true">◈</span> ${engineer.cost}</b></span>
+              <span class="unit-card-bottom"><small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small><b><span aria-hidden="true">◈</span> <span data-role-cost>${engineer.cost}</span></b></span>
             </button>`).join("")}
           </div>
           <div class="deck-footer">
-            <span class="hint-copy">快捷键 1–5 招聘 · E 升级时代 · Space 暂停</span>
-            <button id="upgrade-era" class="era-button" aria-label="升级技术时代"><span data-era-button>升级时代</span><small data-era-cost>需要 80 经验</small></button>
+            <span class="hint-copy">点需求卡优先调度 · R 冲刺 · 1–5 招聘</span>
+            <div class="deck-actions">
+              <button id="ship-it" class="ship-it-button" aria-label="极限冲刺：持续 12 秒，效率提升 40%，技术债增加 25，冷却 45 秒" title="持续 12 秒，效率 +40%，技术债 +25，冷却 45 秒">
+                <span data-ship-it-label>极限冲刺</span><small data-ship-it-state>+40% · 技术债 +25</small>
+              </button>
+              <button id="upgrade-era" class="era-button" aria-label="升级技术时代"><span data-era-button>升级时代</span><small data-era-cost>需要 80 经验</small></button>
+            </div>
           </div>
         </section>
 
@@ -177,6 +188,7 @@ export class GameApp {
     this.root.querySelector("#upgrade-era")?.addEventListener("click", () => this.advanceEra());
     this.root.querySelector("#pause-game")?.addEventListener("click", () => this.togglePause());
     this.root.querySelector("#speed-game")?.addEventListener("click", () => this.toggleSpeed());
+    this.root.querySelector("#ship-it")?.addEventListener("click", () => this.useShipIt());
     this.root.querySelector("#back-to-menu")?.addEventListener("click", () => this.showMenu());
     this.root.querySelector("#replay-battle")?.addEventListener("click", () => this.startBattle(true));
     this.root.querySelector("#export-analytics")?.addEventListener("click", () => this.telemetry.exportCurrentRun());
@@ -203,6 +215,12 @@ export class GameApp {
   private advanceEra(): void {
     if (!this.state) return;
     upgradeEra(this.state);
+    this.updateHud(this.state);
+  }
+
+  private useShipIt(): void {
+    if (!this.state) return;
+    activateShipIt(this.state);
     this.updateHud(this.state);
   }
 
@@ -252,6 +270,11 @@ export class GameApp {
       this.advanceEra();
       return;
     }
+    if (event.key.toLowerCase() === "r") {
+      event.preventDefault();
+      this.useShipIt();
+      return;
+    }
     const role = ENGINEER_DEFS[Number(event.key) - 1];
     if (role) this.hire(role.id);
   }
@@ -262,10 +285,10 @@ export class GameApp {
     const timeLeft = Math.max(0, Math.ceil(ROUND_DURATION - state.elapsed));
     this.setText("[data-time]", `${String(Math.floor(timeLeft / 60)).padStart(2, "0")}:${String(timeLeft % 60).padStart(2, "0")}`);
     this.root.classList.toggle("is-deadline", timeLeft <= 30);
-    this.setText("[data-budget]", Math.floor(state.budget).toString());
-    this.setText("[data-exp]", Math.floor(state.experience).toString());
-    this.setText("[data-health-label]", `${Math.ceil(state.projectHealth)}%`);
-    this.setText("[data-debt-label]", Math.floor(state.techDebt).toString());
+    this.setResourceText("[data-budget]", Math.floor(state.budget).toString());
+    this.setResourceText("[data-exp]", Math.floor(state.experience).toString());
+    this.setResourceText("[data-health-label]", `${Math.ceil(state.projectHealth)}%`);
+    this.setResourceText("[data-debt-label]", Math.floor(state.techDebt).toString());
     this.setText("[data-team]", `${state.engineers.length + state.queue.length} / ${MAX_POPULATION}`);
     this.setText("[data-open-requests]", `待办 ${state.requests.length}`);
     this.setText("[data-era-heading]", ERAS[state.techEra].name);
@@ -294,17 +317,22 @@ export class GameApp {
 
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-role]")) {
       const engineer = getEngineerDefinition(button.dataset.role as EngineerId);
+      const hireCost = getEngineerCost(state, engineer.id);
       const locked = engineer.era > state.techEra;
       const full = state.engineers.length + state.queue.length >= MAX_POPULATION || state.queue.length >= MAX_TRAINING_QUEUE;
-      const insufficient = state.budget < engineer.cost;
+      const insufficient = state.budget < hireCost;
       const order = state.queue.find((queued) => queued.role === engineer.id);
       button.disabled = state.phase !== "running" || locked || full;
       button.classList.toggle("is-locked", locked);
       button.classList.toggle("is-insufficient", insufficient && !locked && !full);
       button.classList.toggle("is-training", Boolean(order));
-      button.title = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中，还需 ${order.remaining.toFixed(1)} 秒` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(engineer.cost - state.budget)}` : engineer.summary;
+      button.setAttribute("aria-label", `招聘${engineer.name}，消耗${hireCost}预算`);
+      button.title = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中，还需 ${order.remaining.toFixed(1)} 秒` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(hireCost - state.budget)}` : `${engineer.summary} · 当前招募成本 ${hireCost} · 重复招募同岗位会涨价`;
       const stateLabel = button.querySelector<HTMLElement>("[data-role-state]");
-      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中 ${order.remaining.toFixed(1)}s` : insufficient ? "预算不足" : `交付 ${engineer.workRate}/秒`;
+      const costLabel = button.querySelector<HTMLElement>("[data-role-cost]");
+      if (costLabel) costLabel.textContent = hireCost.toString();
+      const specialties: Record<EngineerId, string> = { intern: "基础支持", frontend: "功能专长", backend: "基础设施", qa: "缺陷专长", agent: "全领域高速" };
+      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中 ${order.remaining.toFixed(1)}s` : insufficient ? "预算不足" : specialties[engineer.id];
     }
 
     const nextEra = getNextEra(state);
@@ -312,6 +340,24 @@ export class GameApp {
     if (eraButton) eraButton.disabled = !nextEra || state.experience < nextEra.cost || state.phase !== "running";
     this.setText("[data-era-button]", nextEra ? `升级：${nextEra.name}` : "已到达 Agent 时代");
     this.setText("[data-era-cost]", nextEra ? `需要 ${nextEra.cost} 经验 · 效率提升` : "所有角色已解锁");
+
+    const shipItButton = this.root.querySelector<HTMLButtonElement>("#ship-it");
+    if (shipItButton) {
+      const activeFor = Math.max(0, state.shipItUntil - state.elapsed);
+      const cooldownFor = Math.max(0, state.shipItCooldownUntil - state.elapsed);
+      const isActive = activeFor > 0;
+      const isCooling = !isActive && cooldownFor > 0;
+      shipItButton.disabled = state.phase !== "running" || state.paused || Boolean(state.pendingEvent) || isActive || isCooling;
+      shipItButton.classList.toggle("is-rushing", isActive);
+      shipItButton.classList.toggle("is-cooling", isCooling);
+      this.setText("[data-ship-it-state]", isActive
+        ? `冲刺中 · ${Math.ceil(activeFor)} 秒`
+        : isCooling ? `冷却 · ${Math.ceil(cooldownFor)} 秒` : `+${Math.round(SHIP_IT_WORK_BONUS * 100)}% · 技术债 +${SHIP_IT_DEBT_COST}`);
+      this.setText("[data-ship-it-label]", isActive ? "Ship It!" : "极限冲刺");
+      shipItButton.title = isActive
+        ? `效率提升持续 ${Math.ceil(activeFor)} 秒；冷却共 ${SHIP_IT_COOLDOWN} 秒`
+        : isCooling ? `极限冲刺冷却中，还需 ${Math.ceil(cooldownFor)} 秒` : `持续 ${SHIP_IT_DURATION} 秒，效率 +${Math.round(SHIP_IT_WORK_BONUS * 100)}%，技术债 +${SHIP_IT_DEBT_COST}，冷却 ${SHIP_IT_COOLDOWN} 秒`;
+    }
 
     const notice = this.root.querySelector<HTMLElement>("[data-notice]");
     if (notice) {
@@ -387,5 +433,19 @@ export class GameApp {
   private setText(selector: string, value: string): void {
     const element = this.root.querySelector<HTMLElement>(selector);
     if (element) element.textContent = value;
+  }
+
+  private setResourceText(selector: string, value: string): void {
+    const element = this.root.querySelector<HTMLElement>(selector);
+    if (!element) return;
+    const previous = element.dataset.resourceValue;
+    element.textContent = value;
+    element.dataset.resourceValue = value;
+    if (previous !== undefined && previous !== value && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      element.animate(
+        [{ transform: "scale(1)", filter: "brightness(1)" }, { transform: "scale(1.12)", filter: "brightness(1.5)", offset: 0.45 }, { transform: "scale(1)", filter: "brightness(1)" }],
+        { duration: 260, easing: "cubic-bezier(.2,.8,.25,1)" }
+      );
+    }
   }
 }
