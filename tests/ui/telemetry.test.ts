@@ -54,3 +54,56 @@ test("summarizes completed requests, hires, and answered change events", () => {
 
   assert.deepEqual(summary, { completedRequests: 2, recruitedEngineers: 1, answeredChanges: 1 });
 });
+
+test("sends configured events through sendBeacon", async () => {
+  const calls: Array<{ url: string; body: Blob }> = [];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    value: { sendBeacon: (url: string, body: Blob) => { calls.push({ url, body }); return true; } },
+    configurable: true
+  });
+
+  try {
+    new TelemetryReporter("https://collector.example/events").track("game_start", {});
+    assert.equal(calls[0]?.url, "https://collector.example/events");
+    assert.equal(calls[0]?.body.type, "application/json");
+    const payload = JSON.parse(await calls[0]!.body.text()) as { type: string; properties: Record<string, unknown> };
+    assert.equal(payload.type, "game_start");
+    assert.deepEqual(payload.properties, {});
+  } finally {
+    if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+    else Reflect.deleteProperty(globalThis, "navigator");
+  }
+});
+
+test("falls back to keepalive fetch when sendBeacon declines an event", () => {
+  const calls: Array<{ url: RequestInfo | URL; init?: RequestInit }> = [];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const previousFetch = globalThis.fetch;
+  Object.defineProperty(globalThis, "navigator", { value: { sendBeacon: () => false }, configurable: true });
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  try {
+    new TelemetryReporter("https://collector.example/events").track("recruit", { role: "frontend" });
+    assert.equal(calls[0]?.url, "https://collector.example/events");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.equal(calls[0]?.init?.keepalive, true);
+    const payload = JSON.parse(String(calls[0]?.init?.body)) as {
+      sessionId: string;
+      runId: string | null;
+      type: string;
+      properties: Record<string, unknown>;
+    };
+    assert.ok(payload.sessionId);
+    assert.equal(payload.runId, null);
+    assert.equal(payload.type, "recruit");
+    assert.deepEqual(payload.properties, { role: "frontend" });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+    else Reflect.deleteProperty(globalThis, "navigator");
+  }
+});

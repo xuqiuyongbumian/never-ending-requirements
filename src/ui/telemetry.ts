@@ -15,7 +15,11 @@ interface ReportEvent {
 export class TelemetryReporter {
   private readonly sessionId = makeId();
   private runId: string | null = null;
-  private readonly endpoint = import.meta.env?.VITE_ANALYTICS_ENDPOINT ?? "";
+  private readonly endpoint: string;
+
+  constructor(endpoint = import.meta.env?.VITE_ANALYTICS_ENDPOINT ?? "") {
+    this.endpoint = endpoint;
+  }
 
   enter(): void {
     this.track("enter", { page: location.pathname });
