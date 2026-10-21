@@ -15,7 +15,7 @@ test("maps the five engineer roles to distinct images and every mapped asset exi
     ...GAME_ASSETS.backgrounds,
     ...Object.values(GAME_ASSETS.icons)
   ];
-  for (const asset of assets) assert.ok(existsSync(resolve("public", asset.src.slice(1))), asset.src);
+  for (const asset of assets) assert.ok(existsSync(resolve("public", asset.src.replace(/^\.\//, "").replace(/^\//, ""))), asset.src);
   assert.equal(new Set(GAME_TEXTURES.map((asset) => asset.key)).size, GAME_TEXTURES.length);
 });
 
