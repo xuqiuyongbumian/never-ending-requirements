@@ -36,6 +36,7 @@ interface RunReport extends RunSummary {
   startedAt: string;
   endedAt: string;
   gameVersion: string;
+  nickname?: string;
 }
 
 interface PendingItem<T> {
@@ -66,11 +67,12 @@ function defaultApiBaseUrl(): string {
 }
 
 export class TelemetryReporter {
-  private readonly sessionId = makeId();
+  readonly sessionId = makeId();
   private runId: string | null = null;
   private runStartedAt: string | null = null;
+  private nickname: string | null = null;
   private readonly legacyEndpoint: string;
-  private readonly apiBaseUrl: string;
+  readonly apiBaseUrl: string;
   private readonly gameVersion: string;
   private readonly now: () => number;
   private readonly fetcher?: typeof fetch;
@@ -104,10 +106,46 @@ export class TelemetryReporter {
     this.track("enter", { page: location.pathname });
   }
 
+  setNickname(value: string | null | undefined): void {
+    const trimmed = (value ?? "").trim().replace(/\s+/g, " ");
+    this.nickname = trimmed.length > 0 ? trimmed.slice(0, 24) : null;
+  }
+
+  getNickname(): string | null {
+    return this.nickname;
+  }
+
+  getRunId(): string | null {
+    return this.runId;
+  }
+
+  getRunStartedAt(): string | null {
+    return this.runStartedAt;
+  }
+
   beginRun(): void {
     this.runId = makeId();
     this.runStartedAt = new Date(this.now()).toISOString();
-    this.track("game_start", {});
+    this.track("game_start", this.nickname ? { nickname: this.nickname } : {});
+  }
+
+  trackInteraction(action: string, properties: Record<string, string | number | boolean> = {}): void {
+    this.track("ui_action", { action, ...properties });
+  }
+
+  abandonRun(summary: {
+    elapsed: number;
+    completedRequests: number;
+    recruitCount: number;
+    missedRequests: number;
+    finalEra: number;
+    finalTechDebt: number;
+    finalProjectHealth: number;
+  }): void {
+    if (!this.runId) return;
+    this.track("run_abandoned", this.nickname ? { ...summary, nickname: this.nickname } : { ...summary }, summary.elapsed);
+    this.runId = null;
+    this.runStartedAt = null;
   }
 
   consume(events: readonly GameTelemetryEvent[]): void {
@@ -151,7 +189,8 @@ export class TelemetryReporter {
       sessionId: this.sessionId,
       startedAt: this.runStartedAt ?? endedAt,
       endedAt,
-      gameVersion: this.gameVersion
+      gameVersion: this.gameVersion,
+      ...(this.nickname ? { nickname: this.nickname } : {})
     };
     this.persistRun(report);
     if (this.apiBaseUrl) {

@@ -15,10 +15,10 @@ import {
   ENGINEER_ANIMATION_SHEETS,
   ENGINEER_SPRITE_SHEETS,
   engineerAnimationKey,
+  runAnimationFrameOffset,
   GAME_ASSETS,
   GAME_TEXTURES,
-  requestTexture,
-  runAnimationFrameOffset
+  requestTexture
 } from "./game-assets";
 import type { AudioEngine } from "../audio/audio-engine";
 import { panFromX } from "../audio/music-plan";
