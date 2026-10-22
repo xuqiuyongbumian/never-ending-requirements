@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import {
+  animationFrameOffset,
   ENGINEER_ANIMATIONS,
   ENGINEER_ANIMATION_SHEETS,
   ENGINEER_SPRITE_SHEETS,
@@ -151,7 +152,7 @@ class AnimationPreviewScene extends Phaser.Scene {
   private currentFrameIndex(role: EngineerId, actor: PreviewActor): number {
     const definition = ENGINEER_ANIMATIONS[role][actor.action];
     const index = actor.sprite.anims.currentFrame?.index;
-    return typeof index === "number" ? index % definition.frameCount : actor.frameIndex;
+    return typeof index === "number" ? animationFrameOffset(definition, index) : actor.frameIndex;
   }
 }
 

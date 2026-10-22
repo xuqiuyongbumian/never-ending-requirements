@@ -89,6 +89,61 @@ test("interpolation remains stable while paused and falls back for a fresh or mi
   assert.equal(getInterpolatedWorldX(freshRun, "engineer", 999), null);
 });
 
+test("engineers hold a capped frontline, then return to their defensive positions", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  addRequest(state, { x: 1450, speed: 0, totalWork: 1000, remainingWork: 1000 });
+  tick(state, 24);
+  assert.ok(state.engineers.every((engineer) => engineer.x <= 1120), "engineers must not walk into the request spawn side");
+  assert.ok(state.engineers.some((engineer) => engineer.x >= 950), "the team should make a short advance to the defense line");
+
+  state.requests = [];
+  for (const engineer of state.engineers) engineer.targetRequestId = null;
+  tick(state, 20);
+  assert.ok(state.engineers.every((engineer) => engineer.x < 520), "idle engineers should return to their home slots");
+});
+
+test("unassigned engineers hold their current lane while other requests remain active", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  for (let id = 2; id <= 5; id += 1) {
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 850, targetRequestId: null, action: "idle" });
+  }
+  const request = addRequest(state, { x: 1000, speed: 10, totalWork: 1000, remainingWork: 1000 });
+  const held = state.engineers[4];
+  const heldX = held.x;
+
+  advanceBattle(state, 1 / 30);
+
+  assert.ok(state.engineers.filter((engineer) => engineer.targetRequestId === request.id).length >= 4);
+  assert.equal(held.targetRequestId, null, "the dispatch cap leaves at least one engineer unassigned");
+  assert.equal(held.x, heldX, "the unassigned engineer should stay in their current lane during an active wave");
+  assert.equal(held.action, "idle");
+});
+
+test("collaborators add less work at each additional slot instead of multiplying linearly", () => {
+  const one = createBattle();
+  const two = createBattle();
+  for (const state of [one, two]) {
+    state.requestScheduleIndex = 12;
+    state.eventScheduleIndex = 6;
+    state.nextEventAt = Number.POSITIVE_INFINITY;
+    state.engineers[0].x = 470;
+    addRequest(state, { x: 500, speed: 0, totalWork: 1000, remainingWork: 1000 });
+  }
+  two.engineers.push({ id: 2, role: "intern", lane: 1, x: 470, targetRequestId: null, action: "idle" });
+  advanceBattle(one, 1 / 30);
+  advanceBattle(two, 1 / 30);
+  const singleWork = 1000 - one.requests[0].remainingWork;
+  const pairWork = 1000 - two.requests[0].remainingWork;
+  assert.ok(pairWork > singleWork);
+  assert.ok(pairWork < singleWork * 2);
+});
+
 function runWinningPolicy(state: BattleState): void {
   let nextHireAt = 0;
   for (let frame = 0; frame < 30 * 300 && state.phase === "running"; frame += 1) {
@@ -111,16 +166,30 @@ function runWinningPolicy(state: BattleState): void {
 function runWinningPolicyWithPlayerActions(state: BattleState): void {
   let nextHireAt = 0;
   let usedShipIt = false;
-  let attemptedPriority = false;
   for (let frame = 0; frame < 30 * 300 && state.phase === "running"; frame += 1) {
     if (state.pendingEvent) safeChoice(state);
     const nextEra = ERAS[state.techEra + 1];
     if (nextEra && state.experience >= nextEra.cost) upgradeEra(state);
 
-    if (!usedShipIt && state.elapsed >= 90 && state.techDebt < 100 && activateShipIt(state)) usedShipIt = true;
-    if (!attemptedPriority && state.elapsed >= 90 && state.requests.length >= 1) {
-      const highestRisk = [...state.requests].sort((a, b) => b.severity - a.severity)[0];
-      attemptedPriority = prioritizeRequirement(state, highestRisk.id);
+    if (state.elapsed >= state.priorityCooldownUntil && state.requests.length > 0) {
+      const highestRisk = [...state.requests].sort((a, b) => {
+        const risk = (request: Requirement) => {
+          const workers = state.engineers.filter((engineer) => engineer.targetRequestId === request.id && engineer.action === "working").length;
+          const speed = request.speed * (workers > 0 ? 0.55 : 1);
+          const secondsToBase = Math.max(0.1, (request.x - BASE_FRONT_EDGE) / Math.max(1, speed));
+          const workRate = state.engineers.reduce((sum, engineer) => {
+            if (engineer.targetRequestId !== request.id) return sum;
+            return sum + (engineer.action === "working" ? 12 : 4);
+          }, 0);
+          const timeToFinish = request.remainingWork / Math.max(1, workRate);
+          return request.severity / Math.max(1, secondsToBase - timeToFinish);
+        };
+        return risk(b) - risk(a);
+      })[0];
+      if (highestRisk) prioritizeRequirement(state, highestRisk.id);
+    }
+    if (!usedShipIt && state.requests.some((request) => request.isFinal) && state.techDebt < 180 && activateShipIt(state)) {
+      usedShipIt = true;
     }
 
     const roster = [...state.engineers.map((engineer) => engineer.role), ...state.queue.map((order) => order.role)];
@@ -335,7 +404,9 @@ test("priority scheduling assigns a suitable subset and leaves other engineers o
 
   advanceBattle(state, 1 / 30);
   assert.equal(state.engineers[0].targetRequestId, priority.id);
-  assert.ok(state.engineers.slice(1).every((engineer) => engineer.targetRequestId === nearby.id));
+  const automaticTargets = state.engineers.slice(1).map((engineer) => engineer.targetRequestId);
+  assert.ok(automaticTargets.includes(nearby.id), "automatic dispatch should keep engineers on the nearby request");
+  assert.ok(automaticTargets.some((targetId) => targetId !== priority.id), "priority dispatch should not pull the whole team off automatic work");
 });
 
 test("priority completion clears the marker and restores nearest-request automation", () => {
@@ -538,9 +609,9 @@ test("ends in defeat at the five-minute deadline when GO-LIVE remains incomplete
   assert.match(state.notice, /窗口已关闭/);
 });
 
-test("a team strategy can clear the five-minute level and complete the final release", () => {
+test("a balanced team can win by prioritizing deadlines and using the final Ship It window", () => {
   const state = createBattle(1024);
-  runWinningPolicy(state);
+  runWinningPolicyWithPlayerActions(state);
   assert.equal(state.phase, "victory", `failed at ${state.elapsed.toFixed(1)}s with health ${state.projectHealth}, debt ${state.techDebt}, era ${state.techEra}`);
   assert.ok(state.elapsed < 300);
   assert.equal(state.techEra, 2);
@@ -550,7 +621,7 @@ test("a team strategy can clear the five-minute level and complete the final rel
 test("the mixed-team win path survives representative deterministic event seeds", () => {
   for (const seed of [1, 2024, 4096, 1024, 0xabcdef]) {
     const state = createBattle(seed);
-    runWinningPolicy(state);
+    runWinningPolicyWithPlayerActions(state);
     assert.equal(state.phase, "victory", `seed ${seed} ended at ${state.elapsed.toFixed(1)}s with health ${state.projectHealth}, debt ${state.techDebt}`);
   }
 });
@@ -561,6 +632,14 @@ test("a mixed team can win while using priority scheduling and Ship It", () => {
   assert.equal(state.phase, "victory", `failed at ${state.elapsed.toFixed(1)}s with health ${state.projectHealth}, debt ${state.techDebt}, era ${state.techEra}`);
   assert.ok(state.telemetry.some((event) => event.type === "requirement_prioritized"));
   assert.ok(state.telemetry.some((event) => event.type === "rush_activated"));
+});
+
+test("a balanced roster without active dispatch leaves GO-LIVE overdue", () => {
+  const state = createBattle(1024);
+  runWinningPolicy(state);
+  assert.equal(state.phase, "defeat");
+  assert.ok(state.telemetry.some((event) => event.type === "request_missed" && event.detail.request === "GO-LIVE"));
+  assert.equal(state.telemetry.some((event) => event.type === "request_complete" && event.detail.request === "GO-LIVE"), false);
 });
 
 test("a front-end-only team cannot trivially win even when using priority and Ship It", () => {

@@ -102,6 +102,9 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
 .deck-status { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: 10px; }
 .deck-team-count b { color: var(--text-primary); font: 750 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .deck-status [data-queue], .deck-status [data-open-requests] { overflow: hidden; max-width: 210px; text-overflow: ellipsis; white-space: nowrap; }
+.open-requests-status { padding: 3px 6px; border: 1px solid transparent; border-radius: 6px; transition: color 150ms ease, border-color 150ms ease, background 150ms ease; }
+.open-requests-status.has-priority { border-color: rgb(255 189 115 / 30%); color: var(--accent-gold); background: rgb(255 189 115 / 8%); }
+.open-requests-status.has-urgent { border-color: rgb(255 107 131 / 38%); color: var(--accent-red); background: rgb(255 107 131 / 9%); font-weight: 800; }
 .deck-separator { color: var(--accent-gold); opacity: .65; }
 .deck-status .speed-button { flex: 0 0 auto; }
 .speed-button { padding: 4px 7px; border: 1px solid rgb(100 220 207 / 25%); border-radius: 6px; color: var(--accent-cyan); background: rgb(100 220 207 / 7%); cursor: pointer; font-size: 10px; }
