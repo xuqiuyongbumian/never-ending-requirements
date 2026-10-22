@@ -6,6 +6,7 @@ import { getEngineerDefinition } from "../../src/core/game.ts";
 import {
   animationFrameOffset,
   runAnimationFrameOffset,
+  runContactFrameIndex,
   GAME_ASSETS,
   ENGINEER_ANIMATIONS,
   ENGINEER_ANIMATION_SHEETS,
@@ -45,12 +46,14 @@ test("maps five valid RGBA sprite sheets with distinct, correctly sized action r
     assert.ok(existsSync(path), sheet.src);
     const png = readFileSync(path);
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${role} must be a PNG`);
-    assert.equal(png.readUInt32BE(16), 2048, `${role} sheet width`);
-    assert.equal(png.readUInt32BE(20), 768, `${role} sheet height`);
+    assert.equal(png.readUInt32BE(16), 2066, `${role} padded sheet width`);
+    assert.equal(png.readUInt32BE(20), 776, `${role} padded sheet height`);
     assert.equal(png[24], 8, `${role} must use 8-bit channels`);
     assert.equal(png[25], 6, `${role} must retain RGBA alpha`);
     assert.equal(sheet.frameWidth, 256);
     assert.equal(sheet.frameHeight, 256);
+    assert.equal(sheet.margin, 2);
+    assert.equal(sheet.spacing, 2);
 
     const actions = ENGINEER_ANIMATIONS[role];
     assert.ok(actions.idle.frameCount >= 4 && actions.idle.frameCount <= 6, `${role} idle frames`);
@@ -83,20 +86,36 @@ test("converts global spritesheet frame indexes to local action-frame indexes", 
   assert.equal(animationFrameOffset(working, 15), 5);
 });
 
-test("paces each run cycle to a four-unit stride at the role's real movement speed", () => {
+test("paces each run cycle across 64 world units at the role's real movement speed", () => {
   for (const role of Object.keys(ENGINEER_ANIMATIONS) as Array<keyof typeof ENGINEER_ANIMATIONS>) {
-    assert.equal(ENGINEER_ANIMATIONS[role].moving.frameRate, getEngineerDefinition(role).moveSpeed / 4);
+    const run = ENGINEER_ANIMATIONS[role].moving;
+    const cycleDistance = getEngineerDefinition(role).moveSpeed * run.frameCount / run.frameRate;
+    assert.ok(Math.abs(cycleDistance - 64) < 1e-9, `${role} run cycle length`);
   }
 });
 
-test("run animation advances every four traveled units and loops by distance", () => {
-  const definition = ENGINEER_ANIMATIONS.intern.moving;
-  const speed = getEngineerDefinition("intern").moveSpeed;
-  assert.equal(runAnimationFrameOffset(definition, 0, speed), 0);
-  assert.equal(runAnimationFrameOffset(definition, 3.99, speed), 0);
-  assert.equal(runAnimationFrameOffset(definition, 4, speed), 1);
-  assert.equal(runAnimationFrameOffset(definition, 31.99, speed), 7);
-  assert.equal(runAnimationFrameOffset(definition, 32, speed), 0);
+test("run animation advances by its stride spacing and loops by traveled distance", () => {
+  for (const role of Object.keys(ENGINEER_ANIMATIONS) as Array<keyof typeof ENGINEER_ANIMATIONS>) {
+    const definition = ENGINEER_ANIMATIONS[role].moving;
+    const speed = getEngineerDefinition(role).moveSpeed;
+    const stride = speed / definition.frameRate;
+    assert.equal(runAnimationFrameOffset(definition, 0, speed), 0);
+    assert.equal(runAnimationFrameOffset(definition, stride - 1e-6, speed), 0);
+    assert.equal(runAnimationFrameOffset(definition, stride + 1e-6, speed), 1);
+    assert.equal(runAnimationFrameOffset(definition, 64 - 1e-6, speed), definition.frameCount - 1);
+    assert.equal(runAnimationFrameOffset(definition, 64, speed), 0);
+  }
+});
+
+test("frontend run cycle excludes the standing pose at the end of its source row", () => {
+  assert.equal(ENGINEER_ANIMATIONS.frontend.moving.frameCount, 7);
+});
+
+test("ending a run selects the closest alternating contact pose", () => {
+  const run = ENGINEER_ANIMATIONS.backend.moving;
+  assert.equal(runContactFrameIndex(run, run.start + 1), run.start);
+  assert.equal(runContactFrameIndex(run, run.start + 3), run.start + 4);
+  assert.equal(runContactFrameIndex(run, run.start + 7), run.start);
 });
 
 test("selects the request mascot from its live type and workload", () => {
