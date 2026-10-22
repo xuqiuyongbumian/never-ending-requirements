@@ -54,6 +54,8 @@ const BUBBLE_HEIGHT = 52;
 /** Distance from the bubble centre down to the tail tip. */
 const BUBBLE_TAIL_DROP = 24;
 const BUBBLE_HEAD_GAP = 6;
+const FACING_DEAD_ZONE = 8;
+const MIN_ACTION_DWELL_MS = 120;
 
 interface EngineerView {
   sprite: Phaser.GameObjects.Sprite;
@@ -63,9 +65,12 @@ interface EngineerView {
   bubbleLabel: Phaser.GameObjects.Text;
   motionAction: Engineer["action"] | null;
   motionFrameIndex: number;
+  motionActionAt: number;
   motionPhaseInitialized: boolean;
   lastWorldX: number | null;
   facingLeft: boolean;
+  facingChangedAt: number;
+  renderX: number;
   motionPaused: boolean;
   motionTimeScale: number;
 }
@@ -250,9 +255,12 @@ export class BattleScene extends Phaser.Scene {
           bubbleLabel,
           motionAction: null,
           motionFrameIndex: -1,
+          motionActionAt: 0,
           motionPhaseInitialized: false,
           lastWorldX: null,
           facingLeft: false,
+          facingChangedAt: 0,
+          renderX: engineer.x / WORLD_WIDTH * WIDTH,
           motionPaused: false,
           motionTimeScale: -1
         };
@@ -276,6 +284,14 @@ export class BattleScene extends Phaser.Scene {
     // Core world X is authoritative. Never add a lane-only horizontal render offset:
     // movement, work range, target links and visible feet must share this coordinate.
     const x = worldX / WORLD_WIDTH * WIDTH;
+    // Render-side smoothing: the simulation moves in 1/30s steps, and snapping
+    // the remainder to a station can be a few pixels. Easing the sprite toward
+    // the authoritative world X keeps chases from reading as micro-jitter
+    // without changing movement, work range or target links.
+    const gap = x - view.renderX;
+    view.renderX = Math.abs(gap) > 60 || state.paused ? x : view.renderX + gap * 0.45;
+    if (Math.abs(x - view.renderX) < 0.05) view.renderX = x;
+    const renderX = view.renderX;
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
     const workRushScale = state.elapsed < state.rushUntil
@@ -284,17 +300,25 @@ export class BattleScene extends Phaser.Scene {
     this.playEngineerMotion(view, engineer.id, engineer.runDistance, engineer.role, engineer.action, state.paused || state.pendingEvent !== null, state.speed, workRushScale);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     const spriteY = FLOOR_Y + formation.y + hover;
-    if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
+    if (view.sprite.x !== renderX || view.sprite.y !== spriteY) view.sprite.setPosition(renderX, spriteY);
     const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
+    const now = this.time.now;
+    let desiredFacing = view.facingLeft;
     if (working && target) {
-      view.facingLeft = targetX < worldX;
-    } else if (view.lastWorldX !== null && Math.abs(worldX - view.lastWorldX) > 0.05) {
-      view.facingLeft = worldX < view.lastWorldX;
+      const facing = targetX - worldX;
+      if (Math.abs(facing) > FACING_DEAD_ZONE) desiredFacing = facing < 0;
+    } else if (view.lastWorldX !== null) {
+      const travelled = worldX - view.lastWorldX;
+      if (Math.abs(travelled) > 0.4) desiredFacing = travelled < 0;
+    }
+    if (desiredFacing !== view.facingLeft && now - view.facingChangedAt > 90) {
+      view.facingLeft = desiredFacing;
+      view.facingChangedAt = now;
     }
     view.lastWorldX = worldX;
     if (view.sprite.flipX !== view.facingLeft) view.sprite.setFlipX(view.facingLeft);
-    view.shadow.setPosition(x, FLOOR_Y + formation.y - 2);
-    view.aura.setPosition(x, FLOOR_Y + formation.y - 48 + hover);
+    view.shadow.setPosition(renderX, FLOOR_Y + formation.y - 2);
+    view.aura.setPosition(renderX, FLOOR_Y + formation.y - 48 + hover);
     if (view.bubble.visible !== working) {
       this.tweens.killTweensOf(view.bubble);
       if (working) {
@@ -310,7 +334,7 @@ export class BattleScene extends Phaser.Scene {
       const float = Math.sin(state.elapsed * 4 + engineer.id) * 1.5;
       const bubbleY = FLOOR_Y + formation.y - ENGINEER_ANIMATION_SHEETS[engineer.role].displayHeight
         - BUBBLE_TAIL_DROP - BUBBLE_HEAD_GAP + hover + float;
-      if (view.bubble.x !== x || view.bubble.y !== bubbleY) view.bubble.setPosition(x, bubbleY);
+      if (view.bubble.x !== renderX || view.bubble.y !== bubbleY) view.bubble.setPosition(renderX, bubbleY);
     }
   }
 
@@ -345,22 +369,30 @@ export class BattleScene extends Phaser.Scene {
     speed: BattleState["speed"],
     workRushScale: number
   ): void {
-    if (view.motionAction !== action) {
-      if (action === "moving") {
+    const now = this.time.now;
+    // A one-or-two-frame dip back to idle/working must not tear the run cycle
+    // apart; hold the run animation briefly so the sprite keeps its stride.
+    const holdRun = view.motionAction === "moving"
+      && action !== "moving"
+      && now - view.motionActionAt < MIN_ACTION_DWELL_MS;
+    const effectiveAction = holdRun ? "moving" : action;
+    if (view.motionAction !== effectiveAction) {
+      if (effectiveAction === "moving") {
         view.sprite.anims.stop();
       } else {
-        view.sprite.play(engineerAnimationKey(role, action));
+        view.sprite.play(engineerAnimationKey(role, effectiveAction));
         if (!view.motionPhaseInitialized) {
           view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
         }
       }
       view.motionPhaseInitialized = true;
-      view.motionAction = action;
+      view.motionAction = effectiveAction;
+      view.motionActionAt = now;
       view.motionFrameIndex = -1;
       view.motionTimeScale = -1;
       view.motionPaused = !paused;
     }
-    if (action === "moving") {
+    if (effectiveAction === "moving") {
       const definition = ENGINEER_ANIMATIONS[role].moving;
       const phase = engineerId * STRIDE_PHASE_STEP * definition.frameCount;
       const frameIndex = definition.start + runAnimationFrameOffset(
@@ -377,7 +409,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     // Ship It and other rush effects boost work, not travel speed.
-    const actionScale = action === "working" ? workRushScale : 1;
+    const actionScale = effectiveAction === "working" ? workRushScale : 1;
     const timeScale = speed * actionScale;
     if (view.motionTimeScale !== timeScale) {
       view.sprite.anims.timeScale = timeScale;

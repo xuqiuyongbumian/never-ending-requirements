@@ -146,6 +146,10 @@ const ENGINEER_SPAWN_X = 440;
 const MAX_FRONTLINE_X = 1120;
 const DEFENSE_HOME_MARGIN = 22;
 const MOVE_ARRIVAL_EPSILON = 3;
+// A request card keeps drifting a fraction of a unit every tick. Without a
+// wider resume threshold the engineer would flip moving/working several times
+// per second and restart the run animation, which reads as twitching.
+const MOVE_RESUME_EPSILON = 10;
 const HOME_STATION_START_X = BASE_FRONT_EDGE + 54;
 const HOME_STATION_SPACING = 64;
 const HOME_STATION_COLUMNS = 8;
@@ -667,7 +671,11 @@ function updateEngineers(state: BattleState, delta: number): void {
     const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
     const workstationX = getWorkstationXForSlot(state, engineer, request, slot);
     const destinationX = getEngineerDestinationX(state, engineer, request, slot);
-    if (Math.abs(destinationX - engineer.x) > MOVE_ARRIVAL_EPSILON) {
+    const destinationGap = Math.abs(destinationX - engineer.x);
+    const shouldMove = engineer.action === "moving"
+      ? destinationGap > MOVE_ARRIVAL_EPSILON
+      : destinationGap > MOVE_RESUME_EPSILON;
+    if (shouldMove) {
       const distanceToDestination = destinationX - engineer.x;
       const distance = Math.min(definition.moveSpeed * delta, Math.abs(distanceToDestination));
       engineer.x += Math.sign(distanceToDestination) * distance;

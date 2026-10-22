@@ -723,6 +723,25 @@ test("a missed boss request costs 45 health without ending the battle", () => {
   assert.ok(state.telemetry.some((event) => event.type === "request_missed" && event.detail.boss === true));
 });
 
+test("keeps a settled engineer working through small station drift", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  const request = addRequest(state, { x: 500, speed: 0, totalWork: 10000, remainingWork: 10000 });
+  tick(state, 3);
+  assert.equal(state.engineers[0].action, "working");
+
+  request.x += 6;
+  advanceBattle(state, 1 / 30);
+  assert.equal(state.engineers[0].action, "working", "a 6-unit drift must not restart the run cycle");
+
+  request.x += 40;
+  advanceBattle(state, 1 / 30);
+  assert.equal(state.engineers[0].action, "moving", "a real station change still has to be chased");
+});
+
 test("ends in defeat at the five-minute deadline when GO-LIVE remains incomplete", () => {
   const state = createBattle();
   state.requestScheduleIndex = 12;
