@@ -267,7 +267,7 @@ export function createBattle(seed = 1024): BattleState {
     techDebt: 0,
     projectHealth: MAX_PROJECT_HEALTH,
     techEra: 0,
-    engineers: [{ id: 1, role: "intern", lane: 0, x: ENGINEER_SPAWN_X, runDistance: 0, targetRequestId: null, action: "idle" }],
+    engineers: [{ id: 1, role: "intern", lane: 0, x: HOME_STATION_START_X, runDistance: 0, targetRequestId: null, action: "idle" }],
     requests: [],
     queue: [],
     nextEngineerId: 2,
