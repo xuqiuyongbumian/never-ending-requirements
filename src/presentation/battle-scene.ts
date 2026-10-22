@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
+  getEngineerDefinition,
   getInterpolatedWorldX,
   prioritizeRequirement,
   WORLD_WIDTH,
@@ -32,11 +33,28 @@ const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   launch: "上线"
 };
 
+/** Speech-bubble copy: verbs read better than the old DOC/UI/API abbreviations. */
+const ACTIVITY_LABEL: Record<Engineer["role"], string> = {
+  intern: "写文档",
+  frontend: "改界面",
+  backend: "写接口",
+  qa: "跑回归",
+  agent: "AI 接管"
+};
+const BUBBLE_WIDTH = 96;
+const BUBBLE_HEIGHT = 52;
+/** Distance from the bubble centre down to the tail tip. */
+const BUBBLE_TAIL_DROP = 24;
+const BUBBLE_HEAD_GAP = 6;
+const STRIDE_BOB = 4;
+const FACING_DEAD_ZONE = 8;
+
 interface EngineerView {
   sprite: Phaser.GameObjects.Sprite;
   shadow: Phaser.GameObjects.Ellipse;
   aura: Phaser.GameObjects.Ellipse;
-  activity: Phaser.GameObjects.Text;
+  bubble: Phaser.GameObjects.Container;
+  bubbleLabel: Phaser.GameObjects.Text;
   motionAction: Engineer["action"] | null;
   motionPaused: boolean;
   motionTimeScale: number;
@@ -108,10 +126,14 @@ export class BattleScene extends Phaser.Scene {
     this.lane = this.add.graphics().setDepth(1);
     this.priorityLink = this.add.graphics().setDepth(2);
     this.drawLane();
-    for (const [x, label] of [[160, "研发中心"], [1120, "需求入口"]] as const) {
-      this.add.text(x, FLOOR_Y - 18, label, {
-        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
-      }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(2);
+    const baseSprite = this.add.image(150, FLOOR_Y, GAME_ASSETS.structures.base.key).setOrigin(0.5, 1).setDepth(2);
+    baseSprite.setScale(170 / baseSprite.height);
+    const inboxSprite = this.add.image(1216, FLOOR_Y, GAME_ASSETS.structures.inbox.key).setOrigin(0.5, 1).setDepth(2);
+    inboxSprite.setScale(130 / inboxSprite.height);
+    for (const [x, label] of [[150, "研发中心"], [1216, "需求入口"]] as const) {
+      this.add.text(x, FLOOR_Y - (label === "研发中心" ? 184 : 144), label, {
+        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43", resolution: 2
+      }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(3);
     }
     this.lastHudUpdate = 0;
     this.lastEra = era;
@@ -186,14 +208,19 @@ export class BattleScene extends Phaser.Scene {
         const sprite = this.add.sprite(0, FLOOR_Y, sheet.key, 0).setOrigin(0.5, 1).setDepth(5);
         const baseScale = Math.min(sheet.displayHeight / sheet.frameHeight, 146 / sheet.frameWidth);
         sprite.setScale(baseScale);
+        const bubbleLabel = this.add.text(0, 1, ACTIVITY_LABEL[engineer.role], {
+          fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#262a44", resolution: 2
+        }).setOrigin(0.5);
+        const bubble = this.add
+          .container(0, 0, [this.add.image(0, 0, this.ensureBubbleTexture(engineer.role)), bubbleLabel])
+          .setDepth(7)
+          .setVisible(false);
         view = {
           sprite,
           shadow: this.add.ellipse(0, FLOOR_Y - 2, 52, 12, 0x1b2929, 0.25).setDepth(4),
           aura: this.add.ellipse(0, 0, 78, 92, 0x66d9fa, 0.13).setDepth(4.5).setVisible(engineer.role === "agent"),
-          activity: this.add.text(0, 0, "</>", {
-            fontFamily: "ui-monospace, monospace", fontSize: "15px", fontStyle: "bold",
-            color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
-          }).setOrigin(0.5).setDepth(6).setVisible(false),
+          bubble,
+          bubbleLabel,
           motionAction: null,
           motionPaused: false,
           motionTimeScale: -1
@@ -207,7 +234,7 @@ export class BattleScene extends Phaser.Scene {
       view.sprite.destroy();
       view.shadow.destroy();
       view.aura.destroy();
-      view.activity.destroy();
+      view.bubble.destroy(true);
       this.engineers.delete(id);
     }
   }
@@ -216,24 +243,62 @@ export class BattleScene extends Phaser.Scene {
     const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
     const x = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
     const working = engineer.action === "working";
+    const moving = engineer.action === "moving";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
     this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.elapsed < state.shipItUntil, state.paused, state.speed);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
-    const spriteY = FLOOR_Y + hover;
+    // The sheet has no airborne phase: a small two-beat bounce keeps the stride
+    // from reading as a slide.
+    const strideBob = moving ? Math.abs(Math.sin(view.sprite.anims.getProgress() * Math.PI * 2)) * STRIDE_BOB : 0;
+    const spriteY = FLOOR_Y + hover - strideBob;
     if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
-    const flipX = target ? targetX < worldX : false;
-    if (view.sprite.flipX !== flipX) view.sprite.setFlipX(flipX);
+    // Sprites are drawn facing right, so mirror only when the target is left.
+    // A dead zone stops the facing from flickering while the target passes by.
+    if (target && Math.abs(targetX - worldX) > FACING_DEAD_ZONE) {
+      const facingLeft = targetX < worldX;
+      if (view.sprite.flipX !== facingLeft) view.sprite.setFlipX(facingLeft);
+    }
     view.shadow.setPosition(x, FLOOR_Y - 2);
     view.aura.setPosition(x, FLOOR_Y - 48 + hover);
-    if (view.activity.visible !== working) view.activity.setVisible(working);
-    if (working) {
-      const activity = ({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role];
-      if (view.activity.text !== activity) view.activity.setText(activity);
-      const activityX = x + 3;
-      const activityY = FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover;
-      if (view.activity.x !== activityX || view.activity.y !== activityY) view.activity.setPosition(activityX, activityY);
+    if (view.bubble.visible !== working) {
+      this.tweens.killTweensOf(view.bubble);
+      if (working) {
+        view.bubble.setVisible(true).setScale(0.72);
+        this.tweens.add({ targets: view.bubble, scale: 1, duration: 220, ease: "Back.Out" });
+      } else {
+        view.bubble.setVisible(false);
+      }
     }
+    if (working) {
+      const label = ACTIVITY_LABEL[engineer.role];
+      if (view.bubbleLabel.text !== label) view.bubbleLabel.setText(label);
+      const float = Math.sin(state.elapsed * 4 + engineer.id) * 1.5;
+      const bubbleY = FLOOR_Y - ENGINEER_ANIMATION_SHEETS[engineer.role].displayHeight
+        - BUBBLE_TAIL_DROP - BUBBLE_HEAD_GAP + hover + float;
+      if (view.bubble.x !== x || view.bubble.y !== bubbleY) view.bubble.setPosition(x, bubbleY);
+    }
+  }
+
+  /** Cloud-shaped speech bubble, generated once per role and cached as a texture. */
+  private ensureBubbleTexture(role: Engineer["role"]): string {
+    const key = `engineer-bubble-${role}`;
+    if (this.textures.exists(key)) return key;
+    const graphics = this.add.graphics();
+    const paint = (grow: number, color: number) => {
+      graphics.fillStyle(color, 1);
+      graphics.fillRoundedRect(4 - grow, 13 - grow, 88 + grow * 2, 28 + grow * 2, 12);
+      graphics.fillCircle(24, 20, 11 + grow);
+      graphics.fillCircle(48, 16, 13 + grow);
+      graphics.fillCircle(72, 21, 10 + grow);
+      graphics.fillTriangle(28 - grow, 38, 46 + grow, 38, 30, 49);
+    };
+    paint(2, 0x20243a);
+    paint(0, 0xfff8e7);
+    graphics.fillStyle(getEngineerDefinition(role).color, 1).fillCircle(15, 28, 3.4);
+    graphics.generateTexture(key, BUBBLE_WIDTH, BUBBLE_HEIGHT);
+    graphics.destroy();
+    return key;
   }
 
   private playEngineerMotion(
@@ -255,7 +320,10 @@ export class BattleScene extends Phaser.Scene {
       view.motionAction = action;
       view.motionTimeScale = -1;
     }
-    const timeScale = speed * (rushing ? 1.2 : 1);
+    const cadence = action === "moving"
+      ? Phaser.Math.Clamp(getEngineerDefinition(role).moveSpeed / 64, 0.88, 1.1)
+      : 1;
+    const timeScale = speed * (rushing ? 1.2 : 1) * cadence;
     if (view.motionTimeScale !== timeScale) {
       view.sprite.anims.timeScale = timeScale;
       view.motionTimeScale = timeScale;
@@ -296,12 +364,12 @@ export class BattleScene extends Phaser.Scene {
     const textureKey = requestTexture(request);
     const mascot = this.add.image(-68, 0, textureKey).setOrigin(0.5);
     mascot.setScale(Math.min(68 / mascot.width, 68 / mascot.height));
-    const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "12px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
-    const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#b4bbcc" }).setOrigin(0, 0.5);
-    const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
+    const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "12px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(0, 0.5);
+    const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#b4bbcc", resolution: 2 }).setOrigin(0, 0.5);
+    const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(1, 0.5);
     const progress = this.add.rectangle(-39, 16.5, 0, 5, 0x45aaa0).setOrigin(0, 0.5);
     const priorityMark = this.add.text(88, -15, "★ 优先", {
-      fontFamily: "sans-serif", fontSize: "9px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3
+      fontFamily: "sans-serif", fontSize: "9px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3, resolution: 2
     }).setOrigin(1, 0.5).setVisible(false);
     const container = this.add.container(0, 0, [plate, mascot, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 4 : 3);
     const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;

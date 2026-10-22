@@ -238,3 +238,54 @@ test("pagehide falls back to keepalive fetch when sendBeacon declines the queued
   assert.equal(calls[0]?.init?.headers && (calls[0]?.init?.headers as Record<string, string>)["content-type"], "application/json");
   assert.equal(JSON.parse(stored.get("1024-ai-game-pending-events") ?? "[]").length, 1);
 });
+
+test("attaches a normalized nickname to run lifecycle and abandonment events", async () => {
+  const stored = new Map<string, string>();
+  const payloads: Array<Record<string, unknown>> = [];
+  Object.defineProperty(globalThis, "window", { value: new EventTarget(), configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", {
+    value: class extends Event { detail: unknown; constructor(type: string, init: { detail: unknown }) { super(type); this.detail = init.detail; } },
+    configurable: true
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) },
+    configurable: true
+  });
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    value: {
+      sendBeacon: (_url: string, body: Blob) => {
+        void body.text().then((text) => payloads.push(JSON.parse(text) as Record<string, unknown>));
+        return true;
+      }
+    },
+    configurable: true
+  });
+
+  try {
+    const reporter = new TelemetryReporter("https://collector.example/events");
+    reporter.setNickname("  上线   守门人  ");
+    reporter.beginRun();
+    reporter.abandonRun({
+      elapsed: 42,
+      completedRequests: 3,
+      recruitCount: 2,
+      missedRequests: 1,
+      finalEra: 1,
+      finalTechDebt: 20,
+      finalProjectHealth: 80
+    });
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(payloads[0]?.type, "game_start");
+    assert.deepEqual(payloads[0]?.properties, { nickname: "上线 守门人" });
+    assert.equal(payloads[1]?.type, "run_abandoned");
+    assert.equal((payloads[1]?.properties as Record<string, unknown>).nickname, "上线 守门人");
+    assert.equal((payloads[1]?.properties as Record<string, unknown>).elapsed, 42);
+    assert.ok(payloads[1]?.runId);
+  } finally {
+    if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+    else Reflect.deleteProperty(globalThis, "navigator");
+  }
+});

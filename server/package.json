@@ -10,7 +10,8 @@
     "start": "node --experimental-strip-types src/index.ts",
     "migrate": "node --experimental-strip-types src/migrate.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "typecheck": "../node_modules/.bin/tsc --noEmit -p tsconfig.json"
+    "typecheck": "../node_modules/.bin/tsc --noEmit -p tsconfig.json",
+    "seed:demo": "node --experimental-strip-types scripts/seed-demo.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
