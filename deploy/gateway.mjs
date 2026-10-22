@@ -82,6 +82,12 @@ function serveStatic(req, res) {
 }
 
 const server = createServer((req, res) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    const line = [req.method, req.url, res.statusCode, Date.now() - startedAt + "ms"].join(" ");
+    if (res.statusCode >= 400) console.error("MISS " + line);
+    else console.log(line);
+  });
   if (req.url && req.url.startsWith("/api/")) {
     proxy(req, res);
     return;
