@@ -11,6 +11,8 @@ import {
   ERAS,
   getEngineerCost,
   getEngineerDefinition,
+  getEngineerHomeX,
+  getEngineerWorkstationX,
   getInterpolatedWorldX,
   hireEngineer,
   MAX_PROJECT_HEALTH,
@@ -96,7 +98,7 @@ test("engineers hold a capped frontline, then return to their defensive position
   state.nextEventAt = Number.POSITIVE_INFINITY;
   addRequest(state, { x: 1450, speed: 0, totalWork: 1000, remainingWork: 1000 });
   tick(state, 24);
-  assert.ok(state.engineers.every((engineer) => engineer.x <= 1120), "engineers must not walk into the request spawn side");
+  assert.ok(state.engineers.every((engineer) => engineer.x <= 1120), "engineers must stay behind the request entry area");
   assert.ok(state.engineers.some((engineer) => engineer.x >= 950), "the team should make a short advance to the defense line");
 
   state.requests = [];
@@ -105,7 +107,55 @@ test("engineers hold a capped frontline, then return to their defensive position
   assert.ok(state.engineers.every((engineer) => engineer.x < 520), "idle engineers should return to their home slots");
 });
 
-test("unassigned engineers hold their current lane while other requests remain active", () => {
+test("home posts are distinct and distributed across the defensive line", () => {
+  const state = createBattle();
+  for (let id = 2; id <= 8; id += 1) {
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, targetRequestId: null, action: "idle" });
+  }
+  const stations = state.engineers.map(getEngineerHomeX);
+  assert.equal(new Set(stations).size, state.engineers.length);
+  assert.ok(Math.max(...stations) - Math.min(...stations) >= 400, "the team should not stack at one doorway post");
+});
+
+test("work starts only after an engineer reaches the same visible world-space station", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  const request = addRequest(state, { x: 600, speed: 0, totalWork: 1000, remainingWork: 1000 });
+  const engineer = state.engineers[0];
+  engineer.x = 600;
+  tick(state, 3);
+
+  const stationX = getEngineerWorkstationX(state, engineer);
+  assert.equal(engineer.action, "working");
+  assert.ok(stationX !== null);
+  assert.equal(engineer.x, stationX);
+  assert.ok(Math.abs(request.x - engineer.x) <= getEngineerDefinition(engineer.role).workRange);
+});
+
+test("working crews keep stable stations as a moving request advances", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  const request = addRequest(state, { x: 500, speed: 2, totalWork: 5000, remainingWork: 5000 });
+  const lead = state.engineers[0];
+  lead.x = 470;
+  lead.targetRequestId = request.id;
+  const partner = { id: 2, role: "intern" as const, lane: 1, x: 564, targetRequestId: request.id, action: "working" as const };
+  state.engineers.push(partner);
+
+  tick(state, 2);
+
+  assert.equal(lead.action, "working");
+  assert.equal(partner.action, "working");
+  assert.equal(lead.x, 470);
+  assert.equal(partner.x, 564);
+  assert.ok(Math.abs(request.x - partner.x) <= getEngineerDefinition(partner.role).workRange);
+});
+
+test("unassigned engineers return to home posts while other requests remain active", () => {
   const state = createBattle();
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
@@ -116,13 +166,33 @@ test("unassigned engineers hold their current lane while other requests remain a
   const request = addRequest(state, { x: 1000, speed: 10, totalWork: 1000, remainingWork: 1000 });
   const held = state.engineers[4];
   const heldX = held.x;
+  const homeX = getEngineerHomeX(held);
 
   advanceBattle(state, 1 / 30);
 
   assert.ok(state.engineers.filter((engineer) => engineer.targetRequestId === request.id).length >= 4);
   assert.equal(held.targetRequestId, null, "the dispatch cap leaves at least one engineer unassigned");
-  assert.equal(held.x, heldX, "the unassigned engineer should stay in their current lane during an active wave");
-  assert.equal(held.action, "idle");
+  assert.ok(Math.abs(held.x - homeX) < Math.abs(heldX - homeX), "the unassigned engineer should begin returning to its stable home post");
+  assert.equal(held.action, "moving");
+});
+
+test("far requests use separated staging posts without sending engineers to the entrance", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  for (let id = 2; id <= 5; id += 1) {
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, targetRequestId: null, action: "idle" });
+  }
+  const request = addRequest(state, { x: 1510, speed: 0, totalWork: 1000, remainingWork: 1000, isFinal: true });
+
+  tick(state, 24);
+
+  const assigned = state.engineers.filter((engineer) => engineer.targetRequestId === request.id);
+  assert.equal(assigned.length, 5);
+  assert.equal(new Set(assigned.map((engineer) => Math.round(engineer.x))).size, assigned.length);
+  assert.ok(assigned.every((engineer) => engineer.x < 1160), "staging stays well before the request entrance");
+  assert.ok(assigned.every((engineer) => engineer.action === "idle"), "staged workers wait until the request reaches their work range");
 });
 
 test("collaborators add less work at each additional slot instead of multiplying linearly", () => {
@@ -135,7 +205,7 @@ test("collaborators add less work at each additional slot instead of multiplying
     state.engineers[0].x = 470;
     addRequest(state, { x: 500, speed: 0, totalWork: 1000, remainingWork: 1000 });
   }
-  two.engineers.push({ id: 2, role: "intern", lane: 1, x: 470, targetRequestId: null, action: "idle" });
+  two.engineers.push({ id: 2, role: "intern", lane: 1, x: 564, targetRequestId: null, action: "idle" });
   advanceBattle(one, 1 / 30);
   advanceBattle(two, 1 / 30);
   const singleWork = 1000 - one.requests[0].remainingWork;

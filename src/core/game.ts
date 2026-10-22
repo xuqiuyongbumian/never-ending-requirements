@@ -143,6 +143,14 @@ const ENGINEER_SPAWN_X = 440;
 const MAX_FRONTLINE_X = 1120;
 const DEFENSE_HOME_MARGIN = 22;
 const MOVE_ARRIVAL_EPSILON = 3;
+const HOME_STATION_START_X = BASE_FRONT_EDGE + 54;
+const HOME_STATION_SPACING = 64;
+const HOME_STATION_COLUMNS = 8;
+const FRONTLINE_STAGING_START_X = 920;
+const FRONTLINE_STAGING_SPACING = 24;
+const WORK_STATION_OFFSETS = [-64, 64, -38, 38, 0] as const;
+const WORK_STATION_SEPARATION = 52;
+const TARGET_RETENTION_RATIO = 0.72;
 const DEBT_INCIDENT_THRESHOLD = 155;
 const COLLABORATION_RETURNS = [1, 0.66, 0.44, 0.3, 0.2, 0.14] as const;
 
@@ -472,6 +480,26 @@ export function activateShipIt(state: BattleState): boolean {
   return true;
 }
 
+/** Authoritative world-space post for an engineer when no request is assigned. */
+export function getEngineerHomeX(engineer: Engineer): number {
+  const column = engineer.lane % HOME_STATION_COLUMNS;
+  return HOME_STATION_START_X + column * HOME_STATION_SPACING;
+}
+
+/**
+ * Returns the actual world-space position used both for movement and rendering.
+ * Assigned engineers receive stable, separated slots around their request.
+ */
+export function getEngineerWorkstationX(state: BattleState, engineer: Engineer): number | null {
+  const request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
+  if (!request) return null;
+  const assigned = state.engineers
+    .filter((candidate) => candidate.targetRequestId === request.id)
+    .sort((a, b) => a.id - b.id);
+  const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
+  return getWorkstationXForSlot(state, engineer, request, slot);
+}
+
 export function advanceBattle(state: BattleState, frameDelta: number): void {
   if (state.paused || state.phase !== "running" || state.pendingEvent) return;
   state.accumulator += Math.min(frameDelta, 0.1) * state.speed;
@@ -595,15 +623,8 @@ function updateEngineers(state: BattleState, delta: number): void {
     if (state.phase !== "running") return;
     const request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
     if (!request) {
-      engineer.targetRequestId = null;
-      // If other requests are still on the board, an unassigned engineer is
-      // being held back by the dispatch group limit. Keep their current lane
-      // instead of visibly marching all the way back through the team.
-      if (state.requests.length > 0) {
-        engineer.action = "idle";
-        continue;
-      }
-      const homeX = getDefenseHomeX(engineer);
+      setEngineerTarget(engineer, null);
+      const homeX = getEngineerHomeX(engineer);
       if (Math.abs(engineer.x - homeX) > MOVE_ARRIVAL_EPSILON) {
         engineer.x += Math.sign(homeX - engineer.x) * Math.min(getEngineerDefinition(engineer.role).moveSpeed * delta, Math.abs(homeX - engineer.x));
         engineer.action = "moving";
@@ -615,17 +636,21 @@ function updateEngineers(state: BattleState, delta: number): void {
     }
 
     const definition = getEngineerDefinition(engineer.role);
-    const distance = request.x - engineer.x;
-    if (Math.abs(distance) > definition.workRange) {
-      const desiredX = getEngagementX(engineer, request);
-      const distanceToStation = desiredX - engineer.x;
-      if (Math.abs(distanceToStation) > MOVE_ARRIVAL_EPSILON) {
-        engineer.x += Math.sign(distanceToStation) * Math.min(definition.moveSpeed * delta, Math.abs(distanceToStation));
-        engineer.action = "moving";
-      } else {
-        engineer.x = desiredX;
-        engineer.action = "idle";
-      }
+    const assigned = state.engineers
+      .filter((candidate) => candidate.targetRequestId === request.id)
+      .sort((a, b) => a.id - b.id);
+    const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
+    const workstationX = getWorkstationXForSlot(state, engineer, request, slot);
+    const destinationX = getEngineerDestinationX(state, engineer, request, slot);
+    if (Math.abs(destinationX - engineer.x) > MOVE_ARRIVAL_EPSILON) {
+      const distanceToDestination = destinationX - engineer.x;
+      engineer.x += Math.sign(distanceToDestination) * Math.min(definition.moveSpeed * delta, Math.abs(distanceToDestination));
+      engineer.action = "moving";
+      continue;
+    }
+    engineer.x = destinationX;
+    if (destinationX !== workstationX || Math.abs(request.x - workstationX) > definition.workRange) {
+      engineer.action = "idle";
       continue;
     }
 
@@ -651,16 +676,35 @@ function updateEngineers(state: BattleState, delta: number): void {
   }
 }
 
-function getDefenseHomeX(engineer: Engineer): number {
-  const definition = getEngineerDefinition(engineer.role);
-  const localSlot = (engineer.lane % 5) - 2;
-  return BASE_FRONT_EDGE + definition.workRange + DEFENSE_HOME_MARGIN + localSlot * 10;
+function getFrontlineStagingX(engineer: Engineer): number {
+  const column = engineer.lane % HOME_STATION_COLUMNS;
+  return Math.min(MAX_FRONTLINE_X - DEFENSE_HOME_MARGIN, FRONTLINE_STAGING_START_X + column * FRONTLINE_STAGING_SPACING);
 }
 
-function getEngagementX(engineer: Engineer, request: Requirement): number {
-  const homeX = getDefenseHomeX(engineer);
+function getWorkstationXForSlot(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
   const definition = getEngineerDefinition(engineer.role);
-  return Math.max(homeX, Math.min(MAX_FRONTLINE_X, request.x - definition.workRange));
+  if (Math.abs(request.x - engineer.x) <= definition.workRange) {
+    const previousWorkers = state.engineers
+      .filter((candidate) => candidate.targetRequestId === request.id && candidate.id < engineer.id)
+      .sort((a, b) => a.id - b.id);
+    const spacedFromPreviousWorkers = previousWorkers.every((candidate) => Math.abs(candidate.x - engineer.x) >= WORK_STATION_SEPARATION);
+    // Workers who already have a clear, in-range station keep it as the task
+    // moves. This removes the repeated stop/run animation caused by chasing a
+    // station that shifted a fraction of a world unit on every simulation tick.
+    if ((slot === 0 || engineer.action === "working") && spacedFromPreviousWorkers) return engineer.x;
+  }
+  const plannedOffset = WORK_STATION_OFFSETS[slot % WORK_STATION_OFFSETS.length];
+  const offset = Math.max(-(definition.workRange - 6), Math.min(definition.workRange - 6, plannedOffset));
+  return Math.max(BASE_FRONT_EDGE + 12, Math.min(MAX_FRONTLINE_X, request.x + offset));
+}
+
+function getEngineerDestinationX(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
+  const definition = getEngineerDefinition(engineer.role);
+  const workX = getWorkstationXForSlot(state, engineer, request, slot);
+  // When a request is still at the far edge, hold a distributed staging line
+  // instead of sending every assigned engineer to the same hard frontline cap.
+  if (Math.abs(request.x - workX) > definition.workRange) return getFrontlineStagingX(engineer);
+  return workX;
 }
 
 function assignmentScore(state: BattleState, engineer: Engineer, request: Requirement, assigned: number): number {
@@ -670,7 +714,8 @@ function assignmentScore(state: BattleState, engineer: Engineer, request: Requir
     : definition.focus === request.kind
       ? (definition.id === "qa" ? 1.5 : 1.35)
       : 0.58;
-  const travelSeconds = Math.max(0, Math.abs(getEngagementX(engineer, request) - engineer.x)) / definition.moveSpeed;
+  const destinationX = getEngineerDestinationX(state, engineer, request, assigned);
+  const travelSeconds = Math.max(0, Math.abs(destinationX - engineer.x)) / definition.moveSpeed;
   const secondsToBase = Math.max(1, (request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed));
   const urgency = 1 + Math.min(0.8, request.severity / 45) + Math.min(1.3, 30 / Math.max(10, secondsToBase)) + (request.isFinal ? 0.75 : 0);
   const debtPenalty = state.techDebt <= 60 ? 1 : 1 - Math.min(0.42, (state.techDebt - 60) * 0.0035);
@@ -694,7 +739,7 @@ function assignEngineerTargets(state: BattleState): void {
     for (const id of state.priorityEngineerIds) {
       const engineer = state.engineers.find((candidate) => candidate.id === id);
       if (!engineer) continue;
-      engineer.targetRequestId = state.prioritizedRequestId;
+      setEngineerTarget(engineer, requestsById.get(state.prioritizedRequestId) ?? null);
       activePriorityIds.add(id);
       assignedByRequest.set(state.prioritizedRequestId, (assignedByRequest.get(state.prioritizedRequestId) ?? 0) + 1);
     }
@@ -715,10 +760,16 @@ function assignEngineerTargets(state: BattleState): void {
         bestScore = score;
       }
     }
-    if (current && assignmentScore(state, engineer, current, assignedByRequest.get(current.id) ?? 0) >= bestScore * 0.84) best = current;
-    engineer.targetRequestId = best?.id ?? null;
+    if (current && assignmentScore(state, engineer, current, assignedByRequest.get(current.id) ?? 0) >= bestScore * TARGET_RETENTION_RATIO) best = current;
+    setEngineerTarget(engineer, best ?? null);
     if (best) assignedByRequest.set(best.id, (assignedByRequest.get(best.id) ?? 0) + 1);
   }
+}
+
+function setEngineerTarget(engineer: Engineer, request: Requirement | null): void {
+  const nextTargetId = request?.id ?? null;
+  if (engineer.targetRequestId === nextTargetId) return;
+  engineer.targetRequestId = nextTargetId;
 }
 
 function completeRequirement(state: BattleState, request: Requirement): void {
