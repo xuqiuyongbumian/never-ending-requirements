@@ -106,6 +106,8 @@ export interface BattleState {
   requestScheduleIndex: number;
   bossSpawned: boolean;
   eventScheduleIndex: number;
+  aiBanUntil: number;
+  aiBanCooldownUntil: number;
   nextEventAt: number;
   randomSeed: number;
   pendingEvent: ChangeEvent | null;
@@ -141,6 +143,14 @@ export const PRIORITY_COOLDOWN = 8;
 export const REPEAT_ROLE_COST_STEP = 0.8;
 const WORKING_REQUEST_SPEED_MULTIPLIER = 0.55;
 export const PASSIVE_BUDGET_PER_SECOND = 0.35;
+// 借来的速度都要付利息：债越高，现金流越紧。
+export const DEBT_INTEREST_PER_DEBT_PER_SECOND = 0.02;
+// Agent 在岗就是对银行打借条：持续吃技术债，断供就会被风控封停。
+export const AGENT_DEBT_PER_SECOND = 0.5;
+export const AI_BAN_THRESHOLD = 120;
+export const AI_BAN_DURATION = 10;
+export const AI_BAN_COOLDOWN = 12;
+export const QA_REPAY_PER_SECOND = 1.2;
 const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
 const MAX_FRONTLINE_X = 1120;
@@ -278,6 +288,8 @@ export function createBattle(seed = 1024): BattleState {
     requestScheduleIndex: 0,
     bossSpawned: false,
     eventScheduleIndex: 0,
+    aiBanUntil: 0,
+    aiBanCooldownUntil: 0,
     nextEventAt: eventTimeAt(0, normalizedSeed),
     randomSeed: normalizedSeed,
     pendingEvent: null,
@@ -559,6 +571,8 @@ function stepBattle(state: BattleState, delta: number): void {
     emitTelemetry(state, "rush_completed", { duration: SHIP_IT_DURATION });
   }
   state.budget = Math.min(9999, state.budget + PASSIVE_BUDGET_PER_SECOND * delta);
+  state.budget -= state.techDebt * DEBT_INTEREST_PER_DEBT_PER_SECOND * delta;
+  updateAgentLoan(state, delta);
   advanceHiring(state, delta);
   spawnScheduledRequests(state);
   triggerChangeEvent(state);
@@ -643,6 +657,30 @@ function updateRequests(state: BattleState, delta: number): void {
   }
 }
 
+function updateAgentLoan(state: BattleState, delta: number): void {
+  const agents = state.engineers.filter((engineer) => engineer.role === "agent");
+  if (state.aiBanUntil !== 0 && state.elapsed >= state.aiBanUntil) {
+    state.aiBanUntil = 0;
+    state.aiBanCooldownUntil = state.elapsed + AI_BAN_COOLDOWN;
+    if (agents.length > 0) setNotice(state, "风控解除，Agent 恢复工作");
+  }
+  const banned = state.aiBanUntil > state.elapsed;
+  if (agents.length > 0 && !banned) {
+    // 月供只在 Agent 正常在岗时计提；停摆期间不再计息，给玩家留出还债窗口。
+    state.techDebt = Math.min(300, state.techDebt + agents.length * AGENT_DEBT_PER_SECOND * delta);
+    const rearmReady = state.elapsed >= state.aiBanCooldownUntil;
+    if (rearmReady && state.techDebt >= AI_BAN_THRESHOLD) {
+      state.aiBanUntil = state.elapsed + AI_BAN_DURATION;
+      setNotice(state, `AI 被风控封禁 ${AI_BAN_DURATION} 秒：技术债是 AI 的月供`);
+      emitTelemetry(state, "ai_banned", { debt: Math.floor(state.techDebt), agents: agents.length });
+    }
+  }
+}
+
+export function isAgentBanned(state: BattleState): boolean {
+  return state.aiBanUntil > state.elapsed;
+}
+
 function updateEngineers(state: BattleState, delta: number): void {
   assignEngineerTargets(state);
   const contributorsByRequest = new Map<number, number>();
@@ -660,6 +698,10 @@ function updateEngineers(state: BattleState, delta: number): void {
       } else {
         engineer.x = homeX;
         engineer.action = "idle";
+        // QA 待命就是还款：把「回头招测试救场」变成明确的收益。
+        if (engineer.role === "qa") {
+          state.techDebt = Math.max(0, state.techDebt - QA_REPAY_PER_SECOND * delta);
+        }
       }
       continue;
     }
@@ -701,9 +743,11 @@ function updateEngineers(state: BattleState, delta: number): void {
     const shipItBonus = state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
     const rushBonus = Math.max(eventRushBonus, shipItBonus);
     const incidentPenalty = state.elapsed < state.incidentUntil ? 0.55 : 1;
+    // 封禁期间 Agent 的产能断供：钱借来的一面是停摆。
+    const agentBanPenalty = engineer.role === "agent" && isAgentBanned(state) ? 0 : 1;
     const contributors = contributorsByRequest.get(request.id) ?? 0;
     const cooperation = COLLABORATION_RETURNS[contributors] ?? COLLABORATION_RETURNS.at(-1)!;
-    const work = definition.workRate * focusBonus * debtPenalty * eraBonus * rushBonus * incidentPenalty * cooperation * delta;
+    const work = definition.workRate * agentBanPenalty * focusBonus * debtPenalty * eraBonus * rushBonus * incidentPenalty * cooperation * delta;
     contributorsByRequest.set(request.id, contributors + 1);
     request.remainingWork = Math.max(0, request.remainingWork - work);
     if (engineer.role === "agent") request.agentWork += work;
@@ -743,6 +787,8 @@ function getEngineerDestinationX(state: BattleState, engineer: Engineer, request
 }
 
 function assignmentScore(state: BattleState, engineer: Engineer, request: Requirement, assigned: number): number {
+  // 封禁中的 Agent 不参与调度，避免把需求分给停摆的劳动力。
+  if (engineer.role === "agent" && isAgentBanned(state)) return 0;
   const definition = getEngineerDefinition(engineer.role);
   const focusBonus = definition.focus === "any"
     ? 1

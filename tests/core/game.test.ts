@@ -15,6 +15,7 @@ import {
   getEngineerWorkstationX,
   getInterpolatedWorldX,
   hireEngineer,
+  isAgentBanned,
   MAX_PROJECT_HEALTH,
   MAX_TRAINING_QUEUE,
   PASSIVE_BUDGET_PER_SECOND,
@@ -740,6 +741,59 @@ test("keeps a settled engineer working through small station drift", () => {
   request.x += 40;
   advanceBattle(state, 1 / 30);
   assert.equal(state.engineers[0].action, "moving", "a real station change still has to be chased");
+});
+
+test("technical debt charges compounding-looking interest on the budget", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  state.techDebt = 100;
+  const noDebtBudget = state.budget;
+  tick(state, 1);
+  // 100 债的利息是 2 预算/秒，被动收入只有 0.35/秒，净现金流必须为负。
+  assert.ok(state.budget < noDebtBudget - 1, "100 debt must cost more than the passive income");
+});
+
+test("agents accrue debt while posted and get risk-banned past the threshold", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  state.engineers.push({ id: state.nextEngineerId++, role: "agent", lane: 1, x: 440, runDistance: 0, targetRequestId: null, action: "idle" });
+  state.techDebt = 0;
+  tick(state, 1);
+  assert.ok(Math.abs(state.techDebt - 0.5) < 1e-9, "a deployed agent must accrue its debt interest");
+
+  state.techDebt = 119.6;
+  tick(state, 1);
+  assert.ok(state.techDebt >= 120, "loan interest should cross the ban threshold");
+  assert.ok(isAgentBanned(state), "agent must be banned once the debt clears the threshold");
+
+  state.elapsed = state.aiBanUntil;
+  tick(state, 0.1);
+  assert.equal(state.aiBanUntil, 0, "the ban must lapse after its duration");
+  assert.ok(state.aiBanCooldownUntil > state.elapsed, "a cooldown must stop an instant re-ban");
+  assert.ok(state.aiBanCooldownUntil > state.elapsed, "a cooldown must stop an instant re-ban");
+});
+
+test("an idle qa pays down technical debt", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  state.techDebt = 60;
+  state.engineers.push({ id: state.nextEngineerId++, role: "qa", lane: 1, x: 440, runDistance: 0, targetRequestId: null, action: "idle" });
+  const qa = state.engineers.at(-1)!;
+  qa.x = getEngineerHomeX(qa);
+  advanceBattle(state, 1 / 60);
+  assert.notEqual(qa.action, "moving", "the qa should stand at its home station before repaying");
+  const debtBefore = state.techDebt;
+  tick(state, 1);
+  assert.ok(state.techDebt < debtBefore - 0.5, "an idle qa must repay debt steadily");
 });
 
 test("ends in defeat at the five-minute deadline when GO-LIVE remains incomplete", () => {
