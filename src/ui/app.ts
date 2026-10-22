@@ -60,11 +60,11 @@ export class GameApp {
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
     document.addEventListener("fullscreenchange", () => {
-      const button = this.root.querySelector<HTMLButtonElement>("#fullscreen-game");
-      if (!button) return;
       const active = Boolean(document.fullscreenElement);
-      button.setAttribute("aria-label", active ? "退出全屏" : "进入全屏");
-      button.title = active ? "退出全屏（Esc）" : "进入全屏";
+      for (const button of this.root.querySelectorAll<HTMLButtonElement>("#fullscreen-game, #fullscreen-menu")) {
+        button.setAttribute("aria-label", active ? "退出全屏" : "进入全屏");
+        button.title = active ? "退出全屏（Esc）" : "进入全屏";
+      }
     });
     this.telemetry.enter();
     this.showMenu();
@@ -72,6 +72,7 @@ export class GameApp {
 
   private showMenu(): void {
     this.community.close();
+    document.querySelector<HTMLElement>("#stage")?.classList.remove("is-battle-mode");
     if (this.state?.phase === "running") this.abandonCurrentRun(this.state);
     if (this.state) this.game?.scene.stop("battle");
     this.game?.registry.remove("battleState");
@@ -101,54 +102,66 @@ export class GameApp {
     this.root.innerHTML = `
       <section class="menu-screen">
         <div class="menu-grid" aria-hidden="true"></div>
+        <button class="menu-home-fullscreen" id="fullscreen-menu" aria-label="进入全屏" title="进入全屏">⛶</button>
         <div class="menu-content">
-          <div class="eyebrow"><span class="live-dot"></span>1024 AI 游戏创作赛 · 5 分钟限时关卡</div>
-          <h1>需求永不眠</h1>
-          <p class="menu-subtitle">组建研发团队，处理不断涌来的需求，在最后期限前让项目上线。</p>
-          <article class="mission-card">
-            <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
-            <h2>需求永不眠：1024 极限上线</h2>
-            <p>需求会从右侧逼近，处理时也不会停下。专长角色处理更快，同岗位重复招聘成本会上升。点击任务卡调度，按 R 冲刺 12 秒（效率 +40%，技术债 +25）。</p>
-            <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
-            <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
-          </article>
-          <section class="menu-achievements" aria-label="成就陈列">
-            <header class="menu-achievements-head">
-              <div class="menu-achievements-title">
-                <span class="menu-achievements-kicker">ACHIEVEMENTS</span>
-                <strong>成就陈列</strong>
+          <section class="menu-hero" aria-labelledby="menu-title">
+            <div class="eyebrow"><span class="live-dot"></span>1024 AI 游戏创作赛 · 5 分钟限时关卡</div>
+            <h1 id="menu-title">需求永不眠</h1>
+            <p class="menu-subtitle">组建研发团队，处理不断涌来的需求，在最后期限前让项目上线。</p>
+            <div class="menu-roster" aria-label="五种研发岗位">
+              <div class="menu-roster-portraits" aria-hidden="true">
+                ${ENGINEER_DEFS.map((engineer) => `<img src="${GAME_ASSETS.characters[engineer.id].src}" alt="" title="${engineer.name}" />`).join("")}
               </div>
-              <div class="menu-achievements-stats">
-                <span><b>${achievementWall.unlockedCount}</b><small>/${achievementWall.achievements.length} 已解锁</small></span>
-                <span><b>${achievementWall.totalPoints}</b><small>成就点数</small></span>
-                <button class="menu-ghost-button" id="open-achievements-wall" type="button">完整成就墙 ↗</button>
-              </div>
-            </header>
-            <div class="menu-achievement-grid">${achievementCards}</div>
-            ${achievementWall.runs === 0 ? `<p class="menu-achievements-empty">还没有结算记录，完成第一局即可点亮成就。</p>` : ""}
-          </section>
-          <div class="era-preview">
-            <div><span class="era-step">01</span><strong>手搓时代</strong><small>实习生 · 前端</small></div>
-            <span class="era-arrow">→</span>
-            <div><span class="era-step">02</span><strong>工程化时代</strong><small>后端 · 测试</small></div>
-            <span class="era-arrow">→</span>
-            <div><span class="era-step">03</span><strong>Agent 时代</strong><small>AI Agent · 技术债</small></div>
-          </div>
-          <div class="menu-community">
-            <label class="nickname-field" for="nickname-input">
-              <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
-              <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
-            </label>
-            <div class="menu-community-actions">
-              <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
-              <button class="menu-ghost-button" id="open-achievements" type="button">成就墙 ↗</button>
-              <span class="menu-best">本机最佳 <b>${personalBest ? personalBest.score : "—"}</b></span>
+              <span><strong>五种岗位 · 三个时代</strong><small>组队处理需求，赶在倒计时归零前上线</small></span>
             </div>
-          </div>
-          <div class="menu-footnote"><span>PHASER 4</span><span>·</span><span>单机策略 · 浏览器即开即玩</span></div>
+            <article class="mission-card">
+              <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
+              <h2>需求永不眠：1024 极限上线</h2>
+              <p>需求会从右侧逼近，处理时也不会停下。专长角色处理更快，同岗位重复招聘成本会上升。点击任务卡调度，按 R 冲刺 12 秒（效率 +40%，技术债 +25）。</p>
+              <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
+              <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
+            </article>
+          </section>
+          <aside class="menu-side" aria-label="成就与其他信息">
+            <section class="menu-achievements" aria-label="成就陈列">
+              <header class="menu-achievements-head">
+                <div class="menu-achievements-title">
+                  <span class="menu-achievements-kicker">ACHIEVEMENTS</span>
+                  <strong>成就陈列</strong>
+                </div>
+                <div class="menu-achievements-stats">
+                  <span><b>${achievementWall.unlockedCount}</b><small>/${achievementWall.achievements.length} 已解锁</small></span>
+                  <span><b>${achievementWall.totalPoints}</b><small>成就点数</small></span>
+                  <button class="menu-ghost-button" id="open-achievements-wall" type="button">完整成就墙 ↗</button>
+                </div>
+              </header>
+              <div class="menu-achievement-grid">${achievementCards}</div>
+              ${achievementWall.runs === 0 ? `<p class="menu-achievements-empty">还没有结算记录，完成第一局即可点亮成就。</p>` : ""}
+            </section>
+            <div class="era-preview">
+              <div><span class="era-step">01</span><strong>手搓时代</strong><small>实习生 · 前端</small></div>
+              <span class="era-arrow">→</span>
+              <div><span class="era-step">02</span><strong>工程化时代</strong><small>后端 · 测试</small></div>
+              <span class="era-arrow">→</span>
+              <div><span class="era-step">03</span><strong>Agent 时代</strong><small>AI Agent · 技术债</small></div>
+            </div>
+            <div class="menu-community">
+              <label class="nickname-field" for="nickname-input">
+                <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
+                <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
+              </label>
+              <div class="menu-community-actions">
+                <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
+                <button class="menu-ghost-button" id="open-achievements" type="button">成就墙 ↗</button>
+                <span class="menu-best">本机最佳 <b>${personalBest ? personalBest.score : "—"}</b></span>
+              </div>
+            </div>
+            <div class="menu-footnote"><span>PHASER 4</span><span>·</span><span>单机策略 · 浏览器即开即玩</span></div>
+          </aside>
         </div>
       </section>`;
     this.root.querySelector<HTMLButtonElement>("#start-battle")?.addEventListener("click", () => this.startBattle());
+    this.root.querySelector<HTMLButtonElement>("#fullscreen-menu")?.addEventListener("click", () => void this.toggleFullscreen());
     const nicknameInput = this.root.querySelector<HTMLInputElement>("#nickname-input");
     nicknameInput?.addEventListener("input", () => {
       saveNickname(nicknameInput.value);
@@ -204,6 +217,7 @@ export class GameApp {
   }
 
   private renderBattleHud(): void {
+    document.querySelector<HTMLElement>("#stage")?.classList.add("is-battle-mode");
     this.root.innerHTML = `
       <section class="battle-ui" aria-label="需求永不眠项目现场">
         <header class="battle-header">
@@ -403,7 +417,7 @@ export class GameApp {
 
   private async toggleFullscreen(): Promise<void> {
     const target = this.root.closest<HTMLElement>("#app");
-    const button = this.root.querySelector<HTMLButtonElement>("#fullscreen-game");
+    const button = this.root.querySelector<HTMLButtonElement>("#fullscreen-game, #fullscreen-menu");
     if (!target) return;
     try {
       if (document.fullscreenElement) await document.exitFullscreen();

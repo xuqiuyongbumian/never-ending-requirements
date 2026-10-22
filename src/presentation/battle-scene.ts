@@ -30,8 +30,8 @@ const FLOOR_Y = 536;
 const STRIDE_PHASE_STEP = 0.61803398875;
 const REQUEST_CARD_WIDTH = 224;
 const REQUEST_CARD_HEIGHT = 72;
-const BOSS_CARD_WIDTH = 300;
-const BOSS_CARD_HEIGHT = 94;
+const BOSS_CARD_WIDTH = 320;
+const BOSS_CARD_HEIGHT = 100;
 const REQUEST_CARD_ROW_GAP = 68;
 const REQUEST_CARD_BASE_OFFSET = 230;
 const REQUEST_MASCOT_LIFT = 28;
@@ -513,18 +513,18 @@ export class BattleScene extends Phaser.Scene {
     const textureKey = requestTexture(request);
     const connector = this.add.graphics().setDepth(2);
     const mascot = this.add.image(0, FLOOR_Y - REQUEST_MASCOT_LIFT, textureKey).setOrigin(0.5, 1).setDepth(5);
-    const mascotScale = Math.min((isBoss ? 96 : 70) / mascot.width, (isBoss ? 96 : 70) / mascot.height);
+    const mascotScale = Math.min((isBoss ? 116 : 78) / mascot.width, (isBoss ? 116 : 78) / mascot.height);
     mascot.setScale(mascotScale);
-    const title = this.add.text(innerLeft, -17, request.title, { fontFamily: "sans-serif", fontSize: isBoss ? "18px" : "16px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(0, 0.5);
-    const code = this.add.text(innerLeft, 7, `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`, { fontFamily: "ui-monospace, monospace", fontSize: "13px", color: "#b4bbcc", resolution: 2 }).setOrigin(0, 0.5);
-    const remaining = this.add.text(innerRight, 7, "", { fontFamily: "ui-monospace, monospace", fontSize: "13px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(1, 0.5);
+    const title = this.add.text(innerLeft, -17, request.title, { fontFamily: "sans-serif", fontSize: isBoss ? "20px" : "16px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(0, 0.5);
+    const code = this.add.text(innerLeft, 7, `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`, { fontFamily: "ui-monospace, monospace", fontSize: "14px", color: "#b4bbcc", resolution: 2 }).setOrigin(0, 0.5);
+    const remaining = this.add.text(innerRight, 7, "", { fontFamily: "ui-monospace, monospace", fontSize: "14px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(1, 0.5);
     const progress = this.add.rectangle(innerLeft, barY, 0, barHeight, 0x45aaa0).setOrigin(0, 0.5);
     const priorityMark = this.add.text(innerRight, -17, "★ 优先", {
       fontFamily: "sans-serif", fontSize: "12px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3, resolution: 2
     }).setOrigin(1, 0.5).setVisible(false);
     const badge = isBoss
       ? this.add.text(-halfWidth + 10, -cardHeight / 2 + 11, "BOSS", {
-        fontFamily: "sans-serif", fontSize: "12px", fontStyle: "bold", color: "#fff1f1",
+        fontFamily: "sans-serif", fontSize: "14px", fontStyle: "bold", color: "#fff1f1",
         backgroundColor: "#c0392b", resolution: 2
       }).setOrigin(0, 0.5).setPadding(6, 3, 6, 3)
       : undefined;
@@ -624,8 +624,8 @@ export class BattleScene extends Phaser.Scene {
       plate.fillStyle(view.isBoss ? 0xff5a4d : 0xffd27d, view.isBoss ? 0.16 : 0.1)
         .fillRoundedRect(-halfWidth - 4, -halfHeight - 4, width + 8, height + 8, 11);
     }
-    plate.fillStyle(0x191c31, 0.94).fillRoundedRect(-halfWidth, -halfHeight, width, height, 9);
-    plate.fillStyle(0x282b43, 0.98).fillRoundedRect(-halfWidth + 1, -halfHeight + 1, width - 2, height - 2, 8);
+    plate.fillStyle(0x191c31, view.isBoss ? 0.95 : 0.86).fillRoundedRect(-halfWidth, -halfHeight, width, height, 9);
+    plate.fillStyle(0x282b43, view.isBoss ? 0.98 : 0.91).fillRoundedRect(-halfWidth + 1, -halfHeight + 1, width - 2, height - 2, 8);
     plate.fillStyle(accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
     plate.lineStyle(prioritized || isFinal || view.isBoss ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal || view.isBoss ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
     plate.fillStyle(0x555a73).fillRoundedRect(-halfWidth + 12, halfHeight - 13, width - 24, view.barHeight + 1, 4);
@@ -666,8 +666,8 @@ export class BattleScene extends Phaser.Scene {
         view.priorityMark.setVisible(false);
         view.code.setText("验收通过 · CLEAR");
         view.remaining.setText("✓ 已完成");
-        view.progress.setFillStyle(0x57cc91, 0.95).setSize(REQUEST_CARD_WIDTH - 32, 7);
-        view.progressWidth = REQUEST_CARD_WIDTH - 32;
+        view.progress.setFillStyle(0x57cc91, 0.95).setSize(view.cardWidth - 32, view.barHeight);
+        view.progressWidth = view.cardWidth - 32;
         view.connector.clear();
         this.tweens.add({
           targets: view.container,
