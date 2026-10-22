@@ -35,7 +35,9 @@ npm run preview
 
 游戏记录进入、开局、招聘、时代升级、事件选择、需求验收/超时、技术债变化、线上故障、胜负和重玩。默认仅将最近 1000 条匿名事件保存在当前浏览器的 `localStorage`，并派发 `game:analytics` 自定义事件；结算页展示本局验收需求、招募工程师和事件应对数量，并可导出本局 JSON。
 
-跨玩家的远程收集需要提供一个接收 JSON POST 的端点。在 `.env.local` 中设置 `VITE_ANALYTICS_ENDPOINT=https://你的收集服务/events`，然后重新构建。配置后每条事件会通过 `navigator.sendBeacon` 发送，并在不可用时尝试 `fetch` keepalive。当前仓库未配置收集端点，因此本地试玩的数据不会自动上传到服务端。端点需允许来自游戏域名的跨域请求；不要把密钥放进 `VITE_` 变量。
+本仓库提供独立 Node.js + Hono + SQLite API，可批量接收行为事件并保存结算结果。纯前端模式仍可单独运行。前后端本地联调、API 路径、迁移、分数规则与限制见 [server/README.md](server/README.md)。
+
+需要联调时，在 `.env.local` 设置 `VITE_API_BASE_URL=http://127.0.0.1:8787`，启动 `npm run dev:server` 与 `npm run dev`。客户端确认 HTTP 成功后才清除待上传队列；失败会有限重试，事件记录仍留在浏览器。旧版 `VITE_ANALYTICS_ENDPOINT` 仍然可用，但只在未配置新 API 时按单条事件上报。不要把密钥放进 `VITE_` 变量。
 
 ## 美术素材
 

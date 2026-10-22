@@ -1,0 +1,23 @@
+{
+  "name": "never-ending-requirements-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "migrate": "node --experimental-strip-types src/migrate.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "../node_modules/.bin/tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.0",
+    "ajv": "^8.17.1",
+    "hono": "^4.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}
