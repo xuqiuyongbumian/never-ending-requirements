@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { calculateRunScore } from "../../shared/scoring.ts";
 import type { GameEventInput, RunInput } from "./schemas.ts";
 
 export type StoredEvent = {
@@ -15,7 +16,10 @@ export type StoredEvent = {
   properties: Record<string, string | number | boolean>;
 };
 
-export type StoredRun = RunInput & { score: number };
+export type StoredRun = Omit<RunInput, "nickname"> & {
+  nickname: string | null;
+  score: number;
+};
 
 const migrationDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations");
 
@@ -108,34 +112,33 @@ export function insertEvents(db: DatabaseSync, events: GameEventInput[], receive
 }
 
 export function calculateScore(run: RunInput): number {
-  const launchBonus = run.result === "win" ? 1000 : 0;
-  const subtotal = launchBonus + run.completedRequests * 100 + Math.round(run.finalProjectHealth * 10) -
-    Math.round(run.finalTechDebt * 5) - run.missedRequests * 100;
-  return Math.max(0, subtotal);
+  return calculateRunScore(run);
 }
 
 export function saveRun(db: DatabaseSync, run: RunInput, receivedAt = new Date().toISOString()): { run: StoredRun; duplicate: boolean } {
   const score = calculateScore(run);
+  const nickname = normalizeNickname(run.nickname);
   const result = db.prepare(`
     INSERT INTO game_runs (
       run_id, session_id, started_at, ended_at, result, completed_requests, recruit_count, missed_requests,
-      final_era, final_tech_debt, final_project_health, score, game_version, received_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      final_era, final_tech_debt, final_project_health, score, game_version, nickname, received_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(run_id) DO NOTHING
   `).run(
     run.runId, run.sessionId, run.startedAt, run.endedAt, run.result, run.completedRequests,
     run.recruitCount, run.missedRequests, run.finalEra, run.finalTechDebt, run.finalProjectHealth,
-    score, run.gameVersion, receivedAt
+    score, run.gameVersion, nickname, receivedAt
   );
 
   const existing = db.prepare(`
     SELECT run_id, session_id, started_at, ended_at, result, completed_requests, recruit_count, missed_requests,
-      final_era, final_tech_debt, final_project_health, score, game_version
+      final_era, final_tech_debt, final_project_health, score, game_version, nickname
     FROM game_runs WHERE run_id = ?
   `).get(run.runId) as {
     run_id: string; session_id: string; started_at: string; ended_at: string; result: "win" | "loss";
     completed_requests: number; recruit_count: number; missed_requests: number; final_era: number;
     final_tech_debt: number; final_project_health: number; score: number; game_version: string;
+    nickname: string | null;
   } | undefined;
   if (!existing) throw new Error("run_insert_failed");
 
@@ -144,7 +147,7 @@ export function saveRun(db: DatabaseSync, run: RunInput, receivedAt = new Date()
     existing.completed_requests === run.completedRequests && existing.recruit_count === run.recruitCount &&
     existing.missed_requests === run.missedRequests && existing.final_era === run.finalEra &&
     existing.final_tech_debt === run.finalTechDebt && existing.final_project_health === run.finalProjectHealth &&
-    existing.game_version === run.gameVersion;
+    existing.game_version === run.gameVersion && existing.nickname === nickname;
   if (!matches) throw new Error("run_id_conflict");
 
   return {
@@ -162,7 +165,14 @@ export function saveRun(db: DatabaseSync, run: RunInput, receivedAt = new Date()
       finalTechDebt: existing.final_tech_debt,
       finalProjectHealth: existing.final_project_health,
       gameVersion: existing.game_version,
+      nickname: existing.nickname,
       score: existing.score
     }
   };
+}
+
+export function normalizeNickname(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  return trimmed.length > 0 ? trimmed.slice(0, 24) : null;
 }

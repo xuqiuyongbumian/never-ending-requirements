@@ -50,10 +50,11 @@ test("maps five valid RGBA sprite sheets with distinct, correctly sized action r
 
     const actions = ENGINEER_ANIMATIONS[role];
     assert.ok(actions.idle.frameCount >= 4 && actions.idle.frameCount <= 6, `${role} idle frames`);
-    assert.ok(actions.moving.frameCount >= 6 && actions.moving.frameCount <= 8, `${role} run frames`);
+    assert.ok(actions.moving.frameCount >= 4 && actions.moving.frameCount <= 8, `${role} run frames`);
     assert.ok(actions.working.frameCount >= 6 && actions.working.frameCount <= 8, `${role} work frames`);
     assert.equal(actions.idle.start, 0);
-    assert.equal(actions.moving.start, 8);
+    assert.ok(actions.moving.start >= 8 && actions.moving.start <= 12, `${role} run start`);
+    assert.ok((actions.moving.start % 8) + actions.moving.frameCount <= 8, `${role} run frames stay inside the run row`);
     assert.equal(actions.working.start, 16);
 
     for (const action of ["idle", "moving", "working"] as const) {

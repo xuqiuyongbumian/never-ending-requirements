@@ -9,6 +9,7 @@ const hostname = process.env.HOST ?? "127.0.0.1";
 const app = createApp(db);
 const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
   console.log(`Game API listening on http://${info.address}:${info.port}`);
+  console.log(`Admin dashboard: http://${info.address}:${info.port}/admin${process.env.ADMIN_TOKEN ? " (ADMIN_TOKEN required)" : " (open local mode)"}`);
 });
 
 function close(): void {

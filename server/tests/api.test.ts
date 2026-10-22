@@ -58,7 +58,7 @@ async function postJson(app: ReturnType<typeof createApp>, path: string, payload
 
 test("migration creates durable event and run tables exactly once", () => {
   const db = new DatabaseSync(":memory:");
-  assert.deepEqual(runMigrations(db), ["0001_initial.sql"]);
+  assert.deepEqual(runMigrations(db), ["0001_initial.sql", "0002_analytics_fields.sql"]);
   assert.deepEqual(runMigrations(db), []);
   const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
   assert.deepEqual(names, ["game_events", "game_runs", "schema_migrations"]);
@@ -171,9 +171,22 @@ test("run API calculates deterministic score, stores result and treats identical
   const retry = await postJson(app, "/api/runs", payload);
   assert.equal(calculateScore(payload), 2_200);
   assert.equal(first.status, 201);
-  assert.deepEqual(await first.json(), { ok: true, duplicate: false, run: { ...payload, score: 2_200 } });
+  const body = await first.json() as {
+    ok: boolean; duplicate: boolean; run: Record<string, unknown>;
+    achievements: Array<{ id: string; unlocked: boolean }>; achievementPoints: number;
+    unlockedAchievements: number; rank: { rank: number; total: number };
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.duplicate, false);
+  assert.deepEqual(body.run, { ...payload, nickname: null, score: 2_200 });
+  assert.equal(body.rank.rank, 1);
+  assert.equal(body.achievements.length, 20);
+  assert.equal(body.unlockedAchievements, body.achievements.filter((achievement) => achievement.unlocked).length);
+  assert.ok(body.achievementPoints > 0);
   assert.equal(retry.status, 200);
-  assert.deepEqual(await retry.json(), { ok: true, duplicate: true, run: { ...payload, score: 2_200 } });
+  const retryBody = await retry.json() as { duplicate: boolean; run: Record<string, unknown> };
+  assert.equal(retryBody.duplicate, true);
+  assert.deepEqual(retryBody.run, { ...payload, nickname: null, score: 2_200 });
   assert.equal(db.prepare("SELECT count(*) AS n FROM game_runs").get()?.n, 1);
   db.close();
 });

@@ -8,10 +8,11 @@
     "dev:server": "npm --prefix server run dev",
     "db:migrate": "npm --prefix server run migrate",
     "build": "tsc --noEmit && npm --prefix server run typecheck && vite build --base=./",
-    "test:game": "node --experimental-strip-types --test tests/core/game.test.ts tests/ui/telemetry.test.ts tests/presentation/game-assets.test.ts tests/audio/music-plan.test.ts",
+    "test:game": "node --experimental-strip-types --test tests/core/game.test.ts tests/core/achievements.test.ts tests/core/decisions.test.ts tests/ui/telemetry.test.ts tests/presentation/game-assets.test.ts tests/audio/music-plan.test.ts",
     "test:server": "npm --prefix server test",
     "test": "npm run test:game && npm run test:server",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "seed:demo": "npm --prefix server run seed:demo"
   },
   "dependencies": {
     "phaser": "4.2.1"

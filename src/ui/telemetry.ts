@@ -36,6 +36,7 @@ interface RunReport extends RunSummary {
   startedAt: string;
   endedAt: string;
   gameVersion: string;
+  nickname?: string;
 }
 
 interface PendingItem<T> {
@@ -54,12 +55,24 @@ export interface TelemetryOptions {
   schedule?: (callback: () => void, delayMs: number) => unknown;
 }
 
+/**
+ * 生产构建默认上报到同源：网关会把 /api/* 反代到后端。
+ * 未配置 VITE_API_BASE_URL 时此前会完全不上报，导致线上埋点静默失效。
+ * 开发环境保持静默，避免本地调试污染线上数据。
+ */
+function defaultApiBaseUrl(): string {
+  if (!import.meta.env?.PROD) return "";
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+}
+
 export class TelemetryReporter {
-  private readonly sessionId = makeId();
+  readonly sessionId = makeId();
   private runId: string | null = null;
   private runStartedAt: string | null = null;
+  private nickname: string | null = null;
   private readonly legacyEndpoint: string;
-  private readonly apiBaseUrl: string;
+  readonly apiBaseUrl: string;
   private readonly gameVersion: string;
   private readonly now: () => number;
   private readonly fetcher?: typeof fetch;
@@ -70,7 +83,8 @@ export class TelemetryReporter {
   constructor(legacyEndpoint?: string, options: TelemetryOptions = {}) {
     const envApiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? "";
     const envLegacyEndpoint = import.meta.env?.VITE_ANALYTICS_ENDPOINT ?? "";
-    this.apiBaseUrl = trimTrailingSlash(options.apiBaseUrl ?? (legacyEndpoint === undefined ? envApiBaseUrl : ""));
+    const configuredBaseUrl = options.apiBaseUrl ?? (legacyEndpoint === undefined ? envApiBaseUrl : "");
+    this.apiBaseUrl = trimTrailingSlash(configuredBaseUrl || defaultApiBaseUrl());
     this.legacyEndpoint = this.apiBaseUrl ? "" : (legacyEndpoint ?? envLegacyEndpoint);
     this.gameVersion = options.gameVersion ?? import.meta.env?.VITE_GAME_VERSION ?? "0.1.0";
     this.now = options.now ?? Date.now;
@@ -92,10 +106,46 @@ export class TelemetryReporter {
     this.track("enter", { page: location.pathname });
   }
 
+  setNickname(value: string | null | undefined): void {
+    const trimmed = (value ?? "").trim().replace(/\s+/g, " ");
+    this.nickname = trimmed.length > 0 ? trimmed.slice(0, 24) : null;
+  }
+
+  getNickname(): string | null {
+    return this.nickname;
+  }
+
+  getRunId(): string | null {
+    return this.runId;
+  }
+
+  getRunStartedAt(): string | null {
+    return this.runStartedAt;
+  }
+
   beginRun(): void {
     this.runId = makeId();
     this.runStartedAt = new Date(this.now()).toISOString();
-    this.track("game_start", {});
+    this.track("game_start", this.nickname ? { nickname: this.nickname } : {});
+  }
+
+  trackInteraction(action: string, properties: Record<string, string | number | boolean> = {}): void {
+    this.track("ui_action", { action, ...properties });
+  }
+
+  abandonRun(summary: {
+    elapsed: number;
+    completedRequests: number;
+    recruitCount: number;
+    missedRequests: number;
+    finalEra: number;
+    finalTechDebt: number;
+    finalProjectHealth: number;
+  }): void {
+    if (!this.runId) return;
+    this.track("run_abandoned", this.nickname ? { ...summary, nickname: this.nickname } : { ...summary }, summary.elapsed);
+    this.runId = null;
+    this.runStartedAt = null;
   }
 
   consume(events: readonly GameTelemetryEvent[]): void {
@@ -139,7 +189,8 @@ export class TelemetryReporter {
       sessionId: this.sessionId,
       startedAt: this.runStartedAt ?? endedAt,
       endedAt,
-      gameVersion: this.gameVersion
+      gameVersion: this.gameVersion,
+      ...(this.nickname ? { nickname: this.nickname } : {})
     };
     this.persistRun(report);
     if (this.apiBaseUrl) {

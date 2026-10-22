@@ -17,7 +17,9 @@ export const ALLOWED_EVENT_TYPES = [
   "replay",
   "change_event",
   "rush_completed",
-  "load_error"
+  "load_error",
+  "ui_action",
+  "run_abandoned"
 ] as const;
 
 export type GameEventInput = {
@@ -43,6 +45,7 @@ export type RunInput = {
   finalTechDebt: number;
   finalProjectHealth: number;
   gameVersion: string;
+  nickname?: string;
 };
 
 const idPattern = "^[A-Za-z0-9_-]{8,80}$";
@@ -106,7 +109,8 @@ const runSchema = {
     finalEra: { type: "integer", minimum: 0, maximum: 2 },
     finalTechDebt: { type: "number", minimum: 0, maximum: 1000 },
     finalProjectHealth: { type: "number", minimum: 0, maximum: 100 },
-    gameVersion: { type: "string", minLength: 1, maxLength: 40, pattern: "^[A-Za-z0-9.+_-]+$" }
+    gameVersion: { type: "string", minLength: 1, maxLength: 40, pattern: "^[A-Za-z0-9.+_-]+$" },
+    nickname: { type: "string", minLength: 1, maxLength: 24 }
   }
 } as const;
 

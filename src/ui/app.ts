@@ -26,9 +26,14 @@ import { GAME_ASSETS } from "../presentation/game-assets";
 import { AudioEngine } from "../audio/audio-engine";
 import { withAudioPatch } from "../audio/audio-settings";
 import { audioPanelMarkup, bindAudioPanel, syncAudioPanel } from "./audio-panel";
+import { CommunityPanel } from "./community";
+import { evaluateCurrentRun, localPersonalBest } from "./local-stats";
 import { summarizeRun, TelemetryReporter } from "./telemetry";
+import { calculateRunScore } from "../../shared/scoring.ts";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
+
+const NICKNAME_KEY = "1024-ai-game-nickname";
 
 export class GameApp {
   private state: BattleState | null = null;
@@ -36,9 +41,16 @@ export class GameApp {
   private visibilityPaused = false;
   private telemetryCursor = 0;
   private readonly telemetry = new TelemetryReporter();
+  private readonly community: CommunityPanel;
   private readonly audio = new AudioEngine();
 
   constructor(private readonly root: HTMLElement, private readonly createGame: CreateGame) {
+    this.community = new CommunityPanel({
+      apiBaseUrl: this.telemetry.apiBaseUrl,
+      sessionId: this.telemetry.sessionId,
+      onOpen: (kind) => this.telemetry.trackInteraction(kind === "leaderboard" ? "open_leaderboard" : "open_achievements")
+    });
+    this.telemetry.setNickname(readNickname());
     document.documentElement.style.setProperty("--studio-background", `url("${GAME_ASSETS.backgrounds[0].src}")`);
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
@@ -47,6 +59,8 @@ export class GameApp {
   }
 
   private showMenu(): void {
+    this.community.close();
+    if (this.state?.phase === "running") this.abandonCurrentRun(this.state);
     if (this.state) this.game?.scene.stop("battle");
     this.game?.registry.remove("battleState");
     this.state = null;
@@ -54,6 +68,7 @@ export class GameApp {
     // The score keeps running across menu switches; only its layers calm down.
     this.audio.setMusicMood({ rush: false, incident: false, urgent: false });
     this.audio.setDuck(1);
+    const personalBest = localPersonalBest();
     this.root.innerHTML = `
       <section class="menu-screen">
         <div class="menu-grid" aria-hidden="true"></div>
@@ -75,15 +90,48 @@ export class GameApp {
             <span class="era-arrow">→</span>
             <div><span class="era-step">03</span><strong>Agent 时代</strong><small>AI Agent · 技术债</small></div>
           </div>
+          <div class="menu-community">
+            <label class="nickname-field" for="nickname-input">
+              <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
+              <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
+            </label>
+            <div class="menu-community-actions">
+              <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
+              <button class="menu-ghost-button" id="open-achievements" type="button">成就墙 ↗</button>
+              <span class="menu-best">本机最佳 <b>${personalBest ? personalBest.score : "—"}</b></span>
+            </div>
+          </div>
           <div class="menu-footnote"><span>PHASER 4</span><span>·</span><span>单机策略 · 浏览器即开即玩</span></div>
         </div>
       </section>`;
     this.root.querySelector<HTMLButtonElement>("#start-battle")?.addEventListener("click", () => this.startBattle());
+    const nicknameInput = this.root.querySelector<HTMLInputElement>("#nickname-input");
+    nicknameInput?.addEventListener("input", () => {
+      saveNickname(nicknameInput.value);
+      this.telemetry.setNickname(nicknameInput.value);
+    });
+    this.root.querySelector("#open-leaderboard")?.addEventListener("click", () => this.community.openLeaderboard());
+    this.root.querySelector("#open-achievements")?.addEventListener("click", () => this.community.openAchievements());
+  }
+
+  private abandonCurrentRun(state: BattleState): void {
+    const summary = summarizeRun(state.telemetry);
+    this.telemetry.abandonRun({
+      elapsed: Math.round(state.elapsed * 10) / 10,
+      completedRequests: summary.completedRequests,
+      recruitCount: summary.recruitedEngineers,
+      missedRequests: summary.missedRequests,
+      finalEra: state.techEra,
+      finalTechDebt: Math.round(state.techDebt),
+      finalProjectHealth: Math.round(state.projectHealth)
+    });
   }
 
   private async startBattle(replay = false): Promise<void> {
     // Browsers only allow audio to start inside a gesture, so unlock first.
     await this.audio.unlock();
+    this.community.close();
+    this.telemetry.setNickname(readNickname());
     this.telemetry.beginRun();
     if (replay) this.telemetry.track("replay", {});
     const state = createBattle(Date.now() >>> 0);
@@ -186,11 +234,21 @@ export class GameApp {
           <span class="result-kicker">1024 极限上线 · 项目复盘</span>
           <h2 data-result-title>项目上线成功</h2>
           <p data-result-copy></p>
+          <div class="result-score"><span>本局得分</span><strong data-run-score>0</strong><small data-run-achievement-summary>未解锁成就</small></div>
+          <div class="result-achievements" data-result-achievements></div>
           <div class="result-stats">
             <span>最终健康<strong data-final-health></strong></span><span>技术债<strong data-final-debt></strong></span><span>完成时代<strong data-final-era></strong></span>
             <span>验收需求<strong data-run-requests></strong></span><span>招募工程师<strong data-run-hires></strong></span><span>应对变更<strong data-run-events></strong></span>
           </div>
-          <div class="result-actions"><button class="primary-button" id="replay-battle">再开一个项目 <span>↻</span></button><button class="secondary-button" id="export-analytics">导出本局行为数据</button><button class="tertiary-button" id="result-home">返回首页</button></div>
+          <div class="result-actions">
+            <button class="primary-button" id="replay-battle">再开一个项目 <span>↻</span></button>
+            <div class="result-secondary-actions">
+              <button class="secondary-button" id="result-leaderboard">查看排行榜</button>
+              <button class="secondary-button" id="result-achievements-open">成就墙</button>
+              <button class="tertiary-button" id="export-analytics">导出本局行为数据</button>
+            </div>
+            <button class="tertiary-button" id="result-home">返回首页</button>
+          </div>
         </section>
       </section>`;
 
@@ -203,12 +261,20 @@ export class GameApp {
     this.root.querySelector("#ship-it")?.addEventListener("click", () => this.useShipIt());
     this.root.querySelector("#back-to-menu")?.addEventListener("click", () => this.showMenu());
     this.root.querySelector("#replay-battle")?.addEventListener("click", () => this.startBattle(true));
-    this.root.querySelector("#export-analytics")?.addEventListener("click", () => this.telemetry.exportCurrentRun());
+    this.root.querySelector("#export-analytics")?.addEventListener("click", () => {
+      this.telemetry.trackInteraction("export_run");
+      this.telemetry.exportCurrentRun();
+    });
+    this.root.querySelector("#result-leaderboard")?.addEventListener("click", () => this.community.openLeaderboard());
+    this.root.querySelector("#result-achievements-open")?.addEventListener("click", () => this.community.openAchievements());
     this.root.querySelector("#result-home")?.addEventListener("click", () => this.showMenu());
     bindAudioPanel(this.root, () => this.audio.settings, {
       onChange: (patch) => {
         this.audio.setSettings(withAudioPatch(this.audio.settings, patch));
         syncAudioPanel(this.root, this.audio.settings);
+        if (typeof patch.muted === "boolean") {
+          this.telemetry.trackInteraction("audio_setting", { muted: patch.muted });
+        }
       },
       onPreview: () => this.audio.playCue("ui_tick")
     });
@@ -247,6 +313,7 @@ export class GameApp {
   private togglePause(): void {
     if (!this.state || this.state.phase !== "running") return;
     this.state.paused = !this.state.paused;
+    this.telemetry.trackInteraction("pause", { paused: this.state.paused });
     this.syncPauseButton();
     this.audio.update(this.state);
   }
@@ -282,6 +349,7 @@ export class GameApp {
   private toggleSpeed(): void {
     if (!this.state || this.state.phase !== "running") return;
     this.state.speed = this.state.speed === 1 ? 2 : 1;
+    this.telemetry.trackInteraction("speed", { speed: this.state.speed });
     const button = this.root.querySelector<HTMLButtonElement>("#speed-game");
     if (button) button.textContent = `速度　${this.state.speed}×`;
   }
@@ -314,6 +382,7 @@ export class GameApp {
   private toggleMute(): void {
     this.audio.setSettings(withAudioPatch(this.audio.settings, { muted: !this.audio.settings.muted }));
     syncAudioPanel(this.root, this.audio.settings);
+    this.telemetry.trackInteraction("mute", { muted: this.audio.settings.muted });
     if (!this.audio.settings.muted) this.audio.playCue("ui_tick");
   }
 
@@ -456,8 +525,42 @@ export class GameApp {
     this.setText("[data-run-requests]", summary.completedRequests.toString());
     this.setText("[data-run-hires]", summary.recruitedEngineers.toString());
     this.setText("[data-run-events]", summary.answeredChanges.toString());
+    const outcome = won ? "win" : "loss";
+    const score = calculateRunScore({
+      result: outcome,
+      completedRequests: summary.completedRequests,
+      missedRequests: summary.missedRequests,
+      finalProjectHealth: state.projectHealth,
+      finalTechDebt: state.techDebt
+    });
+    const runStartedAt = this.telemetry.getRunStartedAt();
+    const wallClockSeconds = runStartedAt ? Math.max(0, (Date.now() - Date.parse(runStartedAt)) / 1000) : state.elapsed;
+    const achievements = evaluateCurrentRun({
+      result: outcome,
+      completedRequests: summary.completedRequests,
+      recruitCount: summary.recruitedEngineers,
+      missedRequests: summary.missedRequests,
+      finalEra: state.techEra,
+      finalTechDebt: state.techDebt,
+      finalProjectHealth: state.projectHealth,
+      durationSeconds: Math.round(wallClockSeconds * 10) / 10
+    }, state.telemetry).filter((achievement) => achievement.unlocked);
+    const achievementPoints = achievements.reduce((total, achievement) => total + achievement.points, 0);
+    this.setText("[data-run-score]", score.toString());
+    this.setText("[data-run-achievement-summary]", achievements.length > 0
+      ? `解锁 ${achievements.length} 项成就 · ${achievementPoints} 点`
+      : "本局未解锁成就");
+    const achievementList = this.root.querySelector<HTMLElement>("[data-result-achievements]");
+    if (achievementList) {
+      achievementList.innerHTML = achievements.length === 0
+        ? `<span class="result-achievement-empty">继续尝试：零漏单、低技术债或极速上线都能解锁成就。</span>`
+        : achievements.map((achievement) => `
+          <span class="result-achievement tier-${achievement.tier}" title="${escapeAttribute(achievement.description)}">
+            <i>${escapeText(achievement.icon)}</i><b>${escapeText(achievement.name)}</b>
+          </span>`).join("");
+    }
     void this.telemetry.finishRun({
-      result: won ? "win" : "loss",
+      result: outcome,
       completedRequests: summary.completedRequests,
       recruitCount: summary.recruitedEngineers,
       missedRequests: summary.missedRequests,
@@ -498,4 +601,32 @@ export class GameApp {
       );
     }
   }
+}
+
+function readNickname(): string {
+  try {
+    return localStorage.getItem(NICKNAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveNickname(value: string): void {
+  try {
+    const trimmed = value.trim().replace(/\s+/g, " ").slice(0, 24);
+    if (trimmed) localStorage.setItem(NICKNAME_KEY, trimmed);
+    else localStorage.removeItem(NICKNAME_KEY);
+  } catch {
+    // Nicknames are a convenience; storage failures must not block play.
+  }
+}
+
+function escapeText(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[character] ?? character));
+}
+
+function escapeAttribute(value: string): string {
+  return escapeText(value);
 }
