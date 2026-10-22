@@ -21,6 +21,7 @@ import {
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FLOOR_Y = 536;
+const STRIDE_PHASE_STEP = 0.61803398875;
 const REQUEST_Y = [310, 370, 430] as const;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
@@ -212,7 +213,7 @@ export class BattleScene extends Phaser.Scene {
     const x = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
-    this.playEngineerMotion(view, engineer.role, engineer.action, state.elapsed < state.shipItUntil, state.paused, state.speed);
+    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.elapsed < state.shipItUntil, state.paused, state.speed);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
     const spriteY = FLOOR_Y + hover;
@@ -233,6 +234,7 @@ export class BattleScene extends Phaser.Scene {
 
   private playEngineerMotion(
     view: EngineerView,
+    engineerId: number,
     role: Engineer["role"],
     action: Engineer["action"],
     rushing: boolean,
@@ -241,6 +243,11 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     if (view.motionAction !== action) {
       view.sprite.play(engineerAnimationKey(role, action));
+      if (action === "moving") {
+        // Give each engineer a stable point in the stride cycle so a recruited
+        // group does not march in lockstep and obscure the foot motion.
+        view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
+      }
       view.motionAction = action;
       view.motionTimeScale = -1;
     }
