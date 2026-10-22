@@ -52,7 +52,7 @@ test("summarizes completed requests, hires, and answered change events", () => {
     { type: "request_complete", at: 48, detail: { request: "GO-LIVE" } }
   ]);
 
-  assert.deepEqual(summary, { completedRequests: 2, recruitedEngineers: 1, answeredChanges: 1 });
+  assert.deepEqual(summary, { completedRequests: 2, recruitedEngineers: 1, answeredChanges: 1, missedRequests: 0 });
 });
 
 test("sends configured events through sendBeacon", async () => {
@@ -106,4 +106,135 @@ test("falls back to keepalive fetch when sendBeacon declines an event", () => {
     if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
     else Reflect.deleteProperty(globalThis, "navigator");
   }
+});
+
+test("batches API events and persists a real run result locally and remotely", async () => {
+  const stored = new Map<string, string>();
+  const calls: Array<{ url: string; body: unknown }> = [];
+  Object.defineProperty(globalThis, "window", { value: new EventTarget(), configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", {
+    value: class extends Event { detail: unknown; constructor(type: string, init: { detail: unknown }) { super(type); this.detail = init.detail; } }, configurable: true
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) }, configurable: true
+  });
+  const reporter = new TelemetryReporter(undefined, {
+    apiBaseUrl: "https://game-api.example/",
+    gameVersion: "0.1.0",
+    flushIntervalMs: 0,
+    fetch: (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return new Response(null, { status: String(url).endsWith("/api/events") ? 202 : 201 });
+    }) as typeof fetch
+  });
+  reporter.beginRun();
+  reporter.track("recruit", { role: "frontend", cost: 55 }, 3);
+  reporter.consume([{ type: "result", at: 300, detail: { result: "victory" } }]);
+  await reporter.finishRun({
+    result: "win", completedRequests: 12, recruitCount: 4, missedRequests: 1,
+    finalEra: 2, finalTechDebt: 35, finalProjectHealth: 87
+  });
+
+  assert.deepEqual(calls.map((call) => call.url), ["https://game-api.example/api/events", "https://game-api.example/api/runs"]);
+  const eventBatch = calls[0]?.body as { events: Array<{ eventId: string; type: string }> };
+  assert.equal(eventBatch.events.length, 3);
+  assert.ok(eventBatch.events.every((event) => event.eventId));
+  assert.deepEqual(eventBatch.events.map((event) => event.type), ["game_start", "recruit", "win"]);
+  const run = calls[1]?.body as { runId: string; sessionId: string; result: string; completedRequests: number; recruitCount: number; missedRequests: number; finalEra: number; gameVersion: string };
+  assert.ok(run.runId);
+  assert.ok(run.sessionId);
+  assert.equal(run.result, "win");
+  assert.equal(run.completedRequests, 12);
+  assert.equal(run.recruitCount, 4);
+  assert.equal(run.missedRequests, 1);
+  assert.equal(run.finalEra, 2);
+  assert.equal(run.gameVersion, "0.1.0");
+  assert.equal(JSON.parse(stored.get("1024-ai-game-telemetry") ?? "[]").length, 3);
+  assert.equal(JSON.parse(stored.get("1024-ai-game-runs") ?? "[]").length, 1);
+  assert.deepEqual(JSON.parse(stored.get("1024-ai-game-pending-events") ?? "[]"), []);
+  assert.deepEqual(JSON.parse(stored.get("1024-ai-game-pending-runs") ?? "[]"), []);
+});
+
+test("retries failed API batches at most three times while keeping the local event history", async () => {
+  const stored = new Map<string, string>();
+  let now = Date.parse("2026-10-22T10:00:00.000Z");
+  let attempts = 0;
+  Object.defineProperty(globalThis, "window", { value: new EventTarget(), configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", {
+    value: class extends Event { detail: unknown; constructor(type: string, init: { detail: unknown }) { super(type); this.detail = init.detail; } }, configurable: true
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) }, configurable: true
+  });
+  const reporter = new TelemetryReporter(undefined, {
+    apiBaseUrl: "https://game-api.example",
+    flushIntervalMs: 0,
+    now: () => now,
+    fetch: (async () => { attempts += 1; throw new Error("offline"); }) as typeof fetch,
+    schedule: () => undefined
+  });
+  reporter.track("enter", { page: "/" });
+
+  await reporter.flush();
+  now += 1000;
+  await reporter.flush();
+  now += 3000;
+  await reporter.flush();
+
+  assert.equal(attempts, 3);
+  assert.equal(JSON.parse(stored.get("1024-ai-game-telemetry") ?? "[]").length, 1);
+  assert.deepEqual(JSON.parse(stored.get("1024-ai-game-pending-events") ?? "[]"), []);
+});
+
+test("pagehide sends pending batches as simple text and keeps them until acknowledged", () => {
+  const stored = new Map<string, string>();
+  const calls: Array<{ url: string; body: Blob }> = [];
+  const windowTarget = new EventTarget();
+  Object.defineProperty(globalThis, "window", { value: windowTarget, configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", {
+    value: class extends Event { detail: unknown; constructor(type: string, init: { detail: unknown }) { super(type); this.detail = init.detail; } }, configurable: true
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) }, configurable: true
+  });
+  const reporter = new TelemetryReporter(undefined, {
+    apiBaseUrl: "https://game-api.example",
+    flushIntervalMs: 0,
+    sendBeacon: (url, body) => { calls.push({ url, body }); return true; }
+  });
+  reporter.track("enter", { page: "/" });
+  windowTarget.dispatchEvent(new Event("pagehide"));
+
+  assert.equal(calls[0]?.url, "https://game-api.example/api/events");
+  assert.equal(calls[0]?.body.type, "text/plain;charset=utf-8");
+  assert.equal(JSON.parse(stored.get("1024-ai-game-pending-events") ?? "[]").length, 1);
+});
+
+test("pagehide falls back to keepalive fetch when sendBeacon declines the queued payload", () => {
+  const stored = new Map<string, string>();
+  const calls: Array<{ url: RequestInfo | URL; init?: RequestInit }> = [];
+  const windowTarget = new EventTarget();
+  Object.defineProperty(globalThis, "window", { value: windowTarget, configurable: true });
+  Object.defineProperty(globalThis, "CustomEvent", {
+    value: class extends Event { detail: unknown; constructor(type: string, init: { detail: unknown }) { super(type); this.detail = init.detail; } }, configurable: true
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) }, configurable: true
+  });
+  const reporter = new TelemetryReporter(undefined, {
+    apiBaseUrl: "https://game-api.example",
+    flushIntervalMs: 0,
+    sendBeacon: () => false,
+    fetch: (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(null, { status: 202 });
+    }) as typeof fetch
+  });
+  reporter.track("enter", { page: "/" });
+  windowTarget.dispatchEvent(new Event("pagehide"));
+
+  assert.equal(calls[0]?.url, "https://game-api.example/api/events");
+  assert.equal(calls[0]?.init?.keepalive, true);
+  assert.equal(calls[0]?.init?.headers && (calls[0]?.init?.headers as Record<string, string>)["content-type"], "application/json");
+  assert.equal(JSON.parse(stored.get("1024-ai-game-pending-events") ?? "[]").length, 1);
 });

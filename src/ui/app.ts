@@ -75,8 +75,8 @@ export class GameApp {
   }
 
   private async startBattle(replay = false): Promise<void> {
-    if (replay) this.telemetry.track("replay", {});
     this.telemetry.beginRun();
+    if (replay) this.telemetry.track("replay", {});
     const state = createBattle(Date.now() >>> 0);
     this.state = state;
     this.telemetryCursor = 0;
@@ -417,6 +417,15 @@ export class GameApp {
     this.setText("[data-run-requests]", summary.completedRequests.toString());
     this.setText("[data-run-hires]", summary.recruitedEngineers.toString());
     this.setText("[data-run-events]", summary.answeredChanges.toString());
+    void this.telemetry.finishRun({
+      result: won ? "win" : "loss",
+      completedRequests: summary.completedRequests,
+      recruitCount: summary.recruitedEngineers,
+      missedRequests: summary.missedRequests,
+      finalEra: state.techEra,
+      finalTechDebt: state.techDebt,
+      finalProjectHealth: state.projectHealth
+    });
   }
 
   private consumeTelemetry(state: BattleState): void {
