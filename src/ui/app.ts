@@ -279,7 +279,6 @@ export class GameApp {
             </button>`).join("")}
           </div>
           <div class="deck-actions" role="group" aria-label="战术行动">
-            <span class="deck-actions-label">战术</span>
             <button id="ship-it" class="unit-card action-card action-ship" aria-label="极限冲刺：持续 12 秒，效率提升 40%，技术债增加 25，冷却 45 秒" title="持续 12 秒，效率 +40%，技术债 +25，冷却 45 秒">
               <span class="unit-card-top"><span class="unit-key action-key">R</span><span class="action-glyph" aria-hidden="true">✦</span></span>
               <strong data-ship-it-label>极限冲刺</strong>

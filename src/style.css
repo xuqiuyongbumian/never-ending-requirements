@@ -165,8 +165,7 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
 .unit-card-bottom b span[data-role-cost] { font-size: 14px; }
 .deck-footer { gap: 10px; min-height: 29px; padding: 7px 2px 0; }
 .hint-copy { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.deck-actions { position: relative; display: grid; grid-auto-flow: column; grid-template-columns: repeat(2, 112px); gap: 6px; align-items: stretch; padding-left: 16px; border-left: 1px dashed rgb(150 160 200 / 40%); }
-.deck-actions-label { position: absolute; top: 50%; left: 1px; color: #7d8399; font: 800 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .3em; transform: translateY(-50%); writing-mode: vertical-rl; }
+.deck-actions { position: relative; display: grid; grid-auto-flow: column; grid-template-columns: repeat(2, 154px); gap: 8px; align-items: stretch; padding-left: 16px; border-left: 1px dashed rgb(150 160 200 / 40%); }
 .unit-card.action-card { border-style: dashed; }
 .action-card .unit-card-top { display: flex; height: 64px; align-items: center; justify-content: center; }
 .action-card .unit-key { top: 0; left: 0; width: 18px; height: 18px; }
@@ -254,7 +253,7 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
   .unit-deck { bottom: 8px; width: calc(100% - 16px); padding: 8px; }
   .unit-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 1px 4px; }
   .unit-cards { grid-template-columns: repeat(5, minmax(0, 122px)); flex: 1 1 auto; overflow: visible; padding: 0; }
-  .deck-actions { grid-template-columns: repeat(2, 96px); flex: 0 0 auto; }
+  .deck-actions { grid-template-columns: repeat(2, 118px); flex: 0 0 auto; }
   .unit-card { padding: 5px; }
   .unit-card-top, .action-card .unit-card-top { height: 54px; }
   .action-glyph { height: 54px; font-size: 22px; }
@@ -294,8 +293,7 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
   .deck-heading { margin-bottom: 5px; }
   .unit-cards { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
   .unit-row { gap: 8px; justify-content: stretch; }
-  .deck-actions { grid-template-columns: repeat(2, 84px); padding-left: 7px; }
-  .deck-actions-label { display: none; }
+  .deck-actions { grid-template-columns: repeat(2, 96px); padding-left: 8px; }
   .unit-card { gap: 2px; padding: 4px; }
   .unit-card-top, .action-card .unit-card-top { height: 46px; }
   .action-glyph { height: 46px; font-size: 19px; }
