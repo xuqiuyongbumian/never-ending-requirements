@@ -39,7 +39,7 @@ npm run preview
 
 ## 美术素材
 
-角色、需求、时代背景和 HUD 图标来自参赛方提供的 `assets-inbox/game_assets_pack.zip`，经过裁切与 WebP 压缩后由 Phaser 和 DOM HUD 加载。源文件、裁切关系和授权说明见 [ASSETS.md](ASSETS.md)。素材包未附独立授权文件，提交比赛前请确认素材的使用授权。
+角色、需求、时代背景和 HUD 图标以独立资源文件由 Phaser 和 DOM HUD 加载，运行时素材位于 `public/assets/game/`。来源、裁切关系和授权说明见 [ASSETS.md](ASSETS.md)。素材包未附独立授权文件，提交比赛前请确认素材的使用授权。
 
 ## 比赛说明
 
