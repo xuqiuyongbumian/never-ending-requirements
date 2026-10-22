@@ -21,6 +21,7 @@ const BASE_SEEDS = [1, 7, 42, 1024, 2024, 4096, 8191, 9999, 0xabc, 0xdef];
 const SEEDS = Array.from({ length: 100 }, (_, index) => BASE_SEEDS[index] ?? (Math.imul(index - BASE_SEEDS.length + 1, 0x9e3779b1) >>> 0));
 if (new Set(SEEDS).size !== SEEDS.length) throw new Error("Balance simulation requires unique deterministic seeds");
 const CHECKPOINTS = [60, 150, 240, 300] as const;
+const DYNAMIC_ROSTER_TARGET = 12;
 
 interface Checkpoint {
   requests: number;
@@ -90,6 +91,7 @@ function nextHire(state: BattleState, strategy: Strategy): EngineerId | null {
 
 function nextDynamicHire(state: BattleState): EngineerId | null {
   const roles = roster(state);
+  if (roles.length >= DYNAMIC_ROSTER_TARGET) return null;
   const active = state.requests.filter((request) => request.kind !== "launch");
   if (!active.length) return roles.filter((role) => role === "frontend").length < 2 ? "frontend" : "intern";
   const workload: Record<"feature" | "bug" | "infra", number> = { feature: 0, bug: 0, infra: 0 };
