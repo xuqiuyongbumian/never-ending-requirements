@@ -151,14 +151,14 @@ def build() -> None:
     tester_work = Image.open(GENERATED / "tester-work-candidate.png").convert("RGBA")
 
     generated = {
-        "frontend": (frontend, frontend_work, (4, 8, 8)),
+        "frontend": (frontend, frontend_work, (4, 7, 8)),
         "tester": (tester, tester_work, (4, 8, 8)),
     }
     for role, (mixed, work, counts) in generated.items():
         result = Image.new("RGBA", (COLUMNS * FRAME, 3 * FRAME), (0, 0, 0, 0))
-        # Mixed sheet layout: 4 idle, 8 run, 4 work in a 4x4 grid.
+        # Mixed sheet layout: 4 idle, up to 8 run, 4 work in a 4x4 grid.
         idle = numbered_grid(mixed, [0, 1, 2, 3], 4, 4)
-        run = numbered_grid(mixed, list(range(4, 12)), 4, 4)
+        run = numbered_grid(mixed, list(range(4, 11 if role == "frontend" else 12)), 4, 4)
         # Dedicated work sheet: the first two rows are a full 8-pose work cycle.
         work_frames = numbered_grid(work, list(range(8)), 4, 4)
         # The concept sheets have row-boundary bleed in both frontend and QA

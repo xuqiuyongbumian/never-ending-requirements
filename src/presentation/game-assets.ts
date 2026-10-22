@@ -126,7 +126,8 @@ export const ENGINEER_ANIMATION_SHEETS = {
   },
 } as const;
 
-// One frame per four travelled world units keeps footfalls tied to movement.
+// A full run cycle covers 64 world units; the previous four-unit stride made feet cycle too fast.
+const RUN_CYCLE_DISTANCE = 64;
 const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   intern: 58,
   frontend: 62,
@@ -134,7 +135,8 @@ const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   qa: 57,
   agent: 70
 };
-const runFrameRate = (role: EngineerId): number => ENGINEER_MOVE_SPEEDS[role] * 0.25;
+const runFrameRate = (role: EngineerId, frameCount = 8): number =>
+  ENGINEER_MOVE_SPEEDS[role] * frameCount / RUN_CYCLE_DISTANCE;
 
 export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
   intern: {
@@ -144,7 +146,8 @@ export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, Engi
   },
   frontend: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("frontend") },
+    // The final source cell is a standing pose, so it is intentionally not part of the run loop.
+    moving: { start: 8, frameCount: 7, frameRate: runFrameRate("frontend", 7) },
     working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   backend: {
