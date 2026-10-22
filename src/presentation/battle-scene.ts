@@ -3,6 +3,7 @@ import {
   advanceBattle,
   getInterpolatedWorldX,
   prioritizeRequirement,
+  SHIP_IT_WORK_BONUS,
   WORLD_WIDTH,
   type BattleState,
   type Engineer,
@@ -22,6 +23,7 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const FLOOR_Y = 536;
 const STRIDE_PHASE_STEP = 0.61803398875;
+const MOTION_STATE_STABILITY_MS = 80;
 const REQUEST_Y = [310, 370, 430] as const;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
@@ -36,6 +38,11 @@ interface EngineerView {
   aura: Phaser.GameObjects.Ellipse;
   activity: Phaser.GameObjects.Text;
   motionAction: Engineer["action"] | null;
+  motionPendingAction: Engineer["action"] | null;
+  motionPendingAt: number;
+  motionPhaseInitialized: boolean;
+  lastWorldX: number | null;
+  facingLeft: boolean;
   motionPaused: boolean;
   motionTimeScale: number;
 }
@@ -191,6 +198,11 @@ export class BattleScene extends Phaser.Scene {
             color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
           }).setOrigin(0.5).setDepth(6).setVisible(false),
           motionAction: null,
+          motionPendingAction: null,
+          motionPendingAt: 0,
+          motionPhaseInitialized: false,
+          lastWorldX: null,
+          facingLeft: false,
           motionPaused: false,
           motionTimeScale: -1
         };
@@ -210,24 +222,33 @@ export class BattleScene extends Phaser.Scene {
 
   private updateEngineerView(view: EngineerView, engineer: Engineer, state: BattleState): void {
     const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
-    const x = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
+    const formation = formationOffset(engineer.lane);
+    const x = worldX / WORLD_WIDTH * WIDTH + formation.x;
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
-    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.elapsed < state.shipItUntil, state.paused, state.speed);
+    const workRushScale = state.elapsed < state.rushUntil
+      ? 1.55
+      : state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
+    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.paused, state.speed, workRushScale);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
-    const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
-    const spriteY = FLOOR_Y + hover;
+    const spriteY = FLOOR_Y + formation.y + hover;
     if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
-    const flipX = target ? targetX < worldX : false;
-    if (view.sprite.flipX !== flipX) view.sprite.setFlipX(flipX);
-    view.shadow.setPosition(x, FLOOR_Y - 2);
-    view.aura.setPosition(x, FLOOR_Y - 48 + hover);
+    const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
+    if (working && target) {
+      view.facingLeft = targetX < worldX;
+    } else if (view.lastWorldX !== null && Math.abs(worldX - view.lastWorldX) > 0.05) {
+      view.facingLeft = worldX < view.lastWorldX;
+    }
+    view.lastWorldX = worldX;
+    if (view.sprite.flipX !== view.facingLeft) view.sprite.setFlipX(view.facingLeft);
+    view.shadow.setPosition(x, FLOOR_Y + formation.y - 2);
+    view.aura.setPosition(x, FLOOR_Y + formation.y - 48 + hover);
     if (view.activity.visible !== working) view.activity.setVisible(working);
     if (working) {
       const activity = ({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role];
       if (view.activity.text !== activity) view.activity.setText(activity);
       const activityX = x + 3;
-      const activityY = FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover;
+      const activityY = FLOOR_Y + formation.y - (engineer.role === "agent" ? 158 : 146) + hover;
       if (view.activity.x !== activityX || view.activity.y !== activityY) view.activity.setPosition(activityX, activityY);
     }
   }
@@ -237,21 +258,39 @@ export class BattleScene extends Phaser.Scene {
     engineerId: number,
     role: Engineer["role"],
     action: Engineer["action"],
-    rushing: boolean,
     paused: boolean,
-    speed: BattleState["speed"]
+    speed: BattleState["speed"],
+    workRushScale: number
   ): void {
-    if (view.motionAction !== action) {
-      view.sprite.play(engineerAnimationKey(role, action));
-      if (action === "moving") {
-        // Give each engineer a stable point in the stride cycle so a recruited
-        // group does not march in lockstep and obscure the foot motion.
+    let displayedAction = action;
+    if (view.motionAction !== null && action !== view.motionAction) {
+      if (view.motionPendingAction !== action) {
+        view.motionPendingAction = action;
+        view.motionPendingAt = this.time.now;
+      }
+      if (this.time.now - view.motionPendingAt < MOTION_STATE_STABILITY_MS) {
+        displayedAction = view.motionAction;
+      }
+    } else {
+      view.motionPendingAction = null;
+    }
+
+    if (view.motionAction !== displayedAction) {
+      view.sprite.play(engineerAnimationKey(role, displayedAction));
+      // Offset each actor's stride whenever they start moving so a team does
+      // not snap into the same pose in lockstep. Keep the first idle loop
+      // desynchronized too, while action transitions remain deterministic.
+      if (displayedAction === "moving" || !view.motionPhaseInitialized) {
         view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
       }
-      view.motionAction = action;
+      view.motionPhaseInitialized = true;
+      view.motionAction = displayedAction;
+      view.motionPendingAction = null;
       view.motionTimeScale = -1;
     }
-    const timeScale = speed * (rushing ? 1.2 : 1);
+    // Ship It and other rush effects boost work, not travel speed.
+    const actionScale = displayedAction === "working" ? workRushScale : 1;
+    const timeScale = speed * actionScale;
     if (view.motionTimeScale !== timeScale) {
       view.sprite.anims.timeScale = timeScale;
       view.motionTimeScale = timeScale;
@@ -383,9 +422,10 @@ export class BattleScene extends Phaser.Scene {
       const engineer = state.engineers.find((candidate) => candidate.id === engineerId && candidate.targetRequestId === state.prioritizedRequestId);
       if (!engineer) continue;
       const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
-      const engineerX = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
+      const formation = formationOffset(engineer.lane);
+      const engineerX = worldX / WORLD_WIDTH * WIDTH + formation.x;
       this.priorityLink.lineStyle(2, 0xffc875, engineer.action === "working" ? 0.6 : 0.34)
-        .lineBetween(requestView.container.x, requestView.container.y + 26, engineerX, FLOOR_Y - 96);
+        .lineBetween(requestView.container.x, requestView.container.y + 26, engineerX, FLOOR_Y + formation.y - 96);
       this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.container.x, requestView.container.y + 26, 3);
     }
   }
@@ -432,4 +472,12 @@ export class BattleScene extends Phaser.Scene {
       this.tweens.add({ targets: reward, y: y - 16, alpha: 0, duration: 850, ease: "Cubic.Out", onComplete: () => reward.destroy() });
     }
   }
+}
+
+function formationOffset(lane: number): { x: number; y: number } {
+  const columns = 5;
+  const column = (lane % columns) - 2;
+  const row = Math.floor(lane / columns) % 4;
+  const rowStagger = row % 2 === 0 ? 0 : 42;
+  return { x: column * 96 + rowStagger, y: row * 10 };
 }

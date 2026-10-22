@@ -1,6 +1,7 @@
 import type Phaser from "phaser";
 import {
   activateShipIt,
+  BASE_FRONT_EDGE,
   chooseChange,
   createBattle,
   ENGINEER_DEFS,
@@ -138,7 +139,7 @@ export class GameApp {
               <span class="deck-separator">·</span>
               <span data-queue>招聘队列：空</span>
               <span class="deck-separator">·</span>
-              <span data-open-requests>待办 0</span>
+              <span class="open-requests-status" data-open-requests>待办 0</span>
               <button id="speed-game" class="speed-button">速度 1×</button>
             </div>
           </div>
@@ -290,7 +291,32 @@ export class GameApp {
     this.setResourceText("[data-health-label]", `${Math.ceil(state.projectHealth)}%`);
     this.setResourceText("[data-debt-label]", Math.floor(state.techDebt).toString());
     this.setText("[data-team]", `${state.engineers.length + state.queue.length} / ${MAX_POPULATION}`);
-    this.setText("[data-open-requests]", `待办 ${state.requests.length}`);
+    const priorityRequest = state.requests.find((request) => request.id === state.prioritizedRequestId);
+    const urgentRequest = [...state.requests].sort((a, b) => {
+      const aWorking = state.engineers.some((engineer) => engineer.targetRequestId === a.id && engineer.action === "working");
+      const bWorking = state.engineers.some((engineer) => engineer.targetRequestId === b.id && engineer.action === "working");
+      const aEta = Math.max(0, a.x - BASE_FRONT_EDGE) / (a.speed * (aWorking ? 0.55 : 1));
+      const bEta = Math.max(0, b.x - BASE_FRONT_EDGE) / (b.speed * (bWorking ? 0.55 : 1));
+      return aEta - bEta;
+    })[0];
+    const urgentEta = urgentRequest
+      ? Math.max(0, urgentRequest.x - BASE_FRONT_EDGE) / (urgentRequest.speed * (state.engineers.some((engineer) => engineer.targetRequestId === urgentRequest.id && engineer.action === "working") ? 0.55 : 1))
+      : Number.POSITIVE_INFINITY;
+    const requestStatus = this.root.querySelector<HTMLElement>("[data-open-requests]");
+    if (requestStatus) {
+      requestStatus.textContent = priorityRequest
+        ? `优先 ${priorityRequest.code} · ${Math.ceil(priorityRequest.remainingWork)} 工时`
+        : urgentRequest && urgentEta <= 24
+          ? `⚠ ${urgentRequest.code} · ${Math.ceil(urgentEta)} 秒`
+          : `待办 ${state.requests.length}`;
+      requestStatus.classList.toggle("has-priority", Boolean(priorityRequest));
+      requestStatus.classList.toggle("has-urgent", !priorityRequest && urgentEta <= 24);
+      requestStatus.title = priorityRequest
+        ? `${priorityRequest.title} 已被优先调度`
+        : urgentRequest && urgentEta <= 24
+          ? `${urgentRequest.title} 预计 ${Math.ceil(urgentEta)} 秒后抵达研发中心；点击战场任务卡重新调度`
+          : `${state.requests.length} 项待办需求`;
+    }
     this.setText("[data-era-heading]", ERAS[state.techEra].name);
     this.setText("[data-tutorial]", tutorialText(state));
     const finalRequest = state.requests.find((request) => request.isFinal);
