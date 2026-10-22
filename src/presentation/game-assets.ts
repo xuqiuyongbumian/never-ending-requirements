@@ -49,22 +49,22 @@ export const ENGINEER_ANIMATION_SHEETS = {
 export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
   intern: {
     idle: { start: 0, frameCount: 6, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    moving: { start: 8, frameCount: 8, frameRate: 14 },
     working: { start: 16, frameCount: 6, frameRate: 8 }
   },
   frontend: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    moving: { start: 8, frameCount: 8, frameRate: 14 },
     working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   backend: {
     idle: { start: 0, frameCount: 6, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    moving: { start: 8, frameCount: 8, frameRate: 14 },
     working: { start: 16, frameCount: 6, frameRate: 8 }
   },
   qa: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    moving: { start: 8, frameCount: 8, frameRate: 14 },
     working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   agent: {

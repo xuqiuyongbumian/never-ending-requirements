@@ -161,8 +161,11 @@ def build() -> None:
         run = numbered_grid(mixed, list(range(4, 12)), 4, 4)
         # Dedicated work sheet: the first two rows are a full 8-pose work cycle.
         work_frames = numbered_grid(work, list(range(8)), 4, 4)
+        # The concept sheets have row-boundary bleed in both frontend and QA
+        # run poses. Remove detached pixels from the previous row before
+        # packing cells into the runtime sheet.
+        run = [clear_small_top_seams(frame, 28) for frame in run]
         if role == "tester":
-            run = [clear_small_top_seams(frame, 26) for frame in run]
             work_frames = [
                 clear_small_top_seams(frame, 60) if index >= 4 else frame
                 for index, frame in enumerate(work_frames)
