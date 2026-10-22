@@ -144,7 +144,6 @@ export const PASSIVE_BUDGET_PER_SECOND = 0.35;
 const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
 const MAX_FRONTLINE_X = 1120;
-const DEFENSE_HOME_MARGIN = 22;
 const MOVE_ARRIVAL_EPSILON = 3;
 // A request card keeps drifting a fraction of a unit every tick. Without a
 // wider resume threshold the engineer would flip moving/working several times
@@ -153,8 +152,6 @@ const MOVE_RESUME_EPSILON = 10;
 const HOME_STATION_START_X = BASE_FRONT_EDGE + 54;
 const HOME_STATION_SPACING = 64;
 const HOME_STATION_COLUMNS = 8;
-const FRONTLINE_STAGING_START_X = 920;
-const FRONTLINE_STAGING_SPACING = 24;
 const WORK_STATION_OFFSETS = [-64, 64, -38, 38, 0] as const;
 const WORK_STATION_SEPARATION = 52;
 const TARGET_RETENTION_RATIO = 0.72;
@@ -418,13 +415,14 @@ export function prioritizeRequirement(state: BattleState, requirementId: number)
       workingCounts.set(engineer.targetRequestId, (workingCounts.get(engineer.targetRequestId) ?? 0) + 1);
     }
   }
-  const candidates = state.engineers.filter((engineer) =>
+  const availableCandidates = state.engineers.filter((engineer) =>
     engineer.action !== "working" || engineer.targetRequestId === requirementId ||
     (engineer.targetRequestId !== null && (workingCounts.get(engineer.targetRequestId) ?? 0) > 1) ||
     state.engineers.length > 1
   );
+  const candidates = availableCandidates.filter((engineer) => canReachRequest(engineer, request));
   if (candidates.length === 0) {
-    setNotice(state, "团队正在处理其他需求，暂时没有可调度工程师");
+    setNotice(state, availableCandidates.length === 0 ? "团队正在处理其他需求，暂时没有可调度工程师" : "需求尚未进入研发防线，暂时无法调度工程师");
     return false;
   }
 
@@ -670,7 +668,25 @@ function updateEngineers(state: BattleState, delta: number): void {
       .sort((a, b) => a.id - b.id);
     const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
     const workstationX = getWorkstationXForSlot(state, engineer, request, slot);
-    const destinationX = getEngineerDestinationX(state, engineer, request, slot);
+    if (getDispatchWaitSeconds(engineer, request, workstationX) > SIMULATION_STEP * 2) {
+      const homeX = getEngineerHomeX(engineer);
+      const homeGap = Math.abs(engineer.x - homeX);
+      const shouldReturn = engineer.action === "moving"
+        ? homeGap > MOVE_ARRIVAL_EPSILON
+        : homeGap > MOVE_RESUME_EPSILON;
+      if (shouldReturn) {
+        const distance = Math.min(definition.moveSpeed * delta, Math.abs(homeX - engineer.x));
+        engineer.x += Math.sign(homeX - engineer.x) * distance;
+        engineer.runDistance += distance;
+        engineer.action = "moving";
+      } else {
+        engineer.x = homeX;
+        engineer.action = "idle";
+      }
+      continue;
+    }
+
+    const destinationX = workstationX;
     const destinationGap = Math.abs(destinationX - engineer.x);
     const shouldMove = engineer.action === "moving"
       ? destinationGap > MOVE_ARRIVAL_EPSILON
@@ -711,11 +727,6 @@ function updateEngineers(state: BattleState, delta: number): void {
   }
 }
 
-function getFrontlineStagingX(engineer: Engineer): number {
-  const column = engineer.lane % HOME_STATION_COLUMNS;
-  return Math.min(MAX_FRONTLINE_X - DEFENSE_HOME_MARGIN, FRONTLINE_STAGING_START_X + column * FRONTLINE_STAGING_SPACING);
-}
-
 function getWorkstationXForSlot(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
   const definition = getEngineerDefinition(engineer.role);
   if (Math.abs(request.x - engineer.x) <= definition.workRange) {
@@ -733,23 +744,29 @@ function getWorkstationXForSlot(state: BattleState, engineer: Engineer, request:
   return Math.max(BASE_FRONT_EDGE + 12, Math.min(MAX_FRONTLINE_X, request.x + offset));
 }
 
-function getEngineerDestinationX(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
+function getDispatchWaitSeconds(engineer: Engineer, request: Requirement, workstationX: number): number {
   const definition = getEngineerDefinition(engineer.role);
-  const workX = getWorkstationXForSlot(state, engineer, request, slot);
-  // When a request is still at the far edge, hold a distributed staging line
-  // instead of sending every assigned engineer to the same hard frontline cap.
-  if (Math.abs(request.x - workX) > definition.workRange) return getFrontlineStagingX(engineer);
-  return workX;
+  if (request.x <= MAX_FRONTLINE_X + definition.workRange || request.speed <= 0 || workstationX < MAX_FRONTLINE_X) return 0;
+  const requestContactTime = (request.x - MAX_FRONTLINE_X - definition.workRange) / request.speed;
+  const travelToFrontTime = Math.max(0, MAX_FRONTLINE_X - getEngineerHomeX(engineer)) / definition.moveSpeed;
+  return requestContactTime - travelToFrontTime;
+}
+
+function canReachRequest(engineer: Engineer, request: Requirement): boolean {
+  const definition = getEngineerDefinition(engineer.role);
+  if (request.x > MAX_FRONTLINE_X + definition.workRange && request.speed <= 0) return false;
+  return !(request.x + definition.workRange < engineer.x && request.speed >= definition.moveSpeed);
 }
 
 function assignmentScore(state: BattleState, engineer: Engineer, request: Requirement, assigned: number): number {
   const definition = getEngineerDefinition(engineer.role);
+  if (!canReachRequest(engineer, request)) return 0;
   const focusBonus = definition.focus === "any"
     ? 1
     : definition.focus === request.kind
       ? (definition.id === "qa" ? 1.5 : 1.35)
       : 0.58;
-  const destinationX = getEngineerDestinationX(state, engineer, request, assigned);
+  const destinationX = getWorkstationXForSlot(state, engineer, request, assigned);
   const travelSeconds = Math.max(0, Math.abs(destinationX - engineer.x)) / definition.moveSpeed;
   const secondsToBase = Math.max(1, (request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed));
   const bossLike = request.isFinal || request.isBoss === true;
@@ -774,8 +791,9 @@ function assignEngineerTargets(state: BattleState): void {
   if (state.prioritizedRequestId !== null && requestsById.has(state.prioritizedRequestId)) {
     for (const id of state.priorityEngineerIds) {
       const engineer = state.engineers.find((candidate) => candidate.id === id);
-      if (!engineer) continue;
-      setEngineerTarget(engineer, requestsById.get(state.prioritizedRequestId) ?? null);
+      const request = requestsById.get(state.prioritizedRequestId);
+      if (!engineer || !request || !canReachRequest(engineer, request)) continue;
+      setEngineerTarget(engineer, request);
       activePriorityIds.add(id);
       assignedByRequest.set(state.prioritizedRequestId, (assignedByRequest.get(state.prioritizedRequestId) ?? 0) + 1);
     }
@@ -796,7 +814,8 @@ function assignEngineerTargets(state: BattleState): void {
         bestScore = score;
       }
     }
-    if (current && assignmentScore(state, engineer, current, assignedByRequest.get(current.id) ?? 0) >= bestScore * TARGET_RETENTION_RATIO) best = current;
+    const currentScore = current ? assignmentScore(state, engineer, current, assignedByRequest.get(current.id) ?? 0) : 0;
+    if (current && currentScore > 0 && currentScore >= bestScore * TARGET_RETENTION_RATIO) best = current;
     setEngineerTarget(engineer, best ?? null);
     if (best) assignedByRequest.set(best.id, (assignedByRequest.get(best.id) ?? 0) + 1);
   }
