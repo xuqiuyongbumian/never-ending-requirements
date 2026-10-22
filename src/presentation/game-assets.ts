@@ -27,6 +27,10 @@ export const GAME_ASSETS = {
     techDebt: { src: asset("assets/game/icons/tech-debt.webp") },
     stability: { src: asset("assets/game/icons/stability.webp") },
     event: { src: asset("assets/game/icons/event.webp") }
+  },
+  props: {
+    developmentCenter: { key: "scene-development-center", src: asset("assets/game/props/development-center.png") },
+    requestPortal: { key: "scene-request-portal", src: asset("assets/game/props/request-portal.png") }
   }
 } as const;
 
@@ -41,6 +45,15 @@ export interface EngineerAnimationDefinition {
 export function animationFrameOffset(definition: EngineerAnimationDefinition, textureFrameIndex: number): number {
   const offset = textureFrameIndex - definition.start;
   return ((offset % definition.frameCount) + definition.frameCount) % definition.frameCount;
+}
+
+export function runAnimationFrameOffset(
+  definition: EngineerAnimationDefinition,
+  distance: number,
+  moveSpeed: number,
+  phase = 0
+): number {
+  return animationFrameOffset(definition, definition.start + Math.floor(distance / (moveSpeed / definition.frameRate) + phase));
 }
 
 export const ENGINEER_ANIMATION_SHEETS = {
@@ -96,7 +109,8 @@ export const ENGINEER_SPRITE_SHEETS = Object.values(ENGINEER_ANIMATION_SHEETS);
 export const GAME_TEXTURES = [
   ...Object.values(GAME_ASSETS.characters),
   ...Object.values(GAME_ASSETS.tasks),
-  ...GAME_ASSETS.backgrounds
+  ...GAME_ASSETS.backgrounds,
+  ...Object.values(GAME_ASSETS.props)
 ] as const;
 
 export function engineerAnimationKey(role: EngineerId, action: EngineerAction): string {

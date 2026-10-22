@@ -5,6 +5,7 @@ import test from "node:test";
 import { getEngineerDefinition } from "../../src/core/game.ts";
 import {
   animationFrameOffset,
+  runAnimationFrameOffset,
   GAME_ASSETS,
   ENGINEER_ANIMATIONS,
   ENGINEER_ANIMATION_SHEETS,
@@ -24,7 +25,8 @@ test("maps every engineer role to a distinct high-resolution portrait", () => {
     ...Object.values(GAME_ASSETS.characters),
     ...Object.values(GAME_ASSETS.tasks),
     ...GAME_ASSETS.backgrounds,
-    ...Object.values(GAME_ASSETS.icons)
+    ...Object.values(GAME_ASSETS.icons),
+    ...Object.values(GAME_ASSETS.props)
   ];
   for (const asset of assets) assert.ok(existsSync(resolve("public", asset.src.replace(/^\.\//, "").replace(/^\//, ""))), asset.src);
   assert.equal(new Set(GAME_TEXTURES.map((asset) => asset.key)).size, GAME_TEXTURES.length);
@@ -84,6 +86,16 @@ test("paces each run cycle against the role's real movement speed", () => {
   for (const role of Object.keys(ENGINEER_ANIMATIONS) as Array<keyof typeof ENGINEER_ANIMATIONS>) {
     assert.equal(ENGINEER_ANIMATIONS[role].moving.frameRate, getEngineerDefinition(role).moveSpeed * 0.2);
   }
+});
+
+test("run animation advances one frame per travelled stride and loops by distance", () => {
+  const definition = ENGINEER_ANIMATIONS.intern.moving;
+  const speed = getEngineerDefinition("intern").moveSpeed;
+  assert.equal(runAnimationFrameOffset(definition, 0, speed), 0);
+  assert.equal(runAnimationFrameOffset(definition, 4.99, speed), 0);
+  assert.equal(runAnimationFrameOffset(definition, 5, speed), 1);
+  assert.equal(runAnimationFrameOffset(definition, 39.99, speed), 7);
+  assert.equal(runAnimationFrameOffset(definition, 40, speed), 0);
 });
 
 test("selects the request mascot from its live type and workload", () => {
