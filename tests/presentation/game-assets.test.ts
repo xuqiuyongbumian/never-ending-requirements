@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { getEngineerDefinition } from "../../src/core/game.ts";
 import {
+  animationFrameOffset,
   GAME_ASSETS,
   ENGINEER_ANIMATIONS,
   ENGINEER_ANIMATION_SHEETS,
@@ -56,6 +58,10 @@ test("maps five valid RGBA sprite sheets with distinct, correctly sized action r
     assert.ok(actions.moving.start >= 8 && actions.moving.start <= 12, `${role} run start`);
     assert.ok((actions.moving.start % 8) + actions.moving.frameCount <= 8, `${role} run frames stay inside the run row`);
     assert.equal(actions.working.start, 16);
+    for (const action of Object.values(actions)) {
+      assert.ok(action.start % 8 === 0, `${role} action starts at a sprite-sheet row boundary`);
+      assert.ok(action.frameCount <= 8, `${role} action stays within one sprite-sheet row`);
+    }
 
     for (const action of ["idle", "moving", "working"] as const) {
       const key = engineerAnimationKey(role, action);
@@ -66,6 +72,19 @@ test("maps five valid RGBA sprite sheets with distinct, correctly sized action r
     }
   }
   assert.equal(animationKeys.size, 15);
+});
+
+test("converts global spritesheet frame indexes to local action-frame indexes", () => {
+  const working = ENGINEER_ANIMATIONS.intern.working;
+  assert.equal(animationFrameOffset(working, 16), 0);
+  assert.equal(animationFrameOffset(working, 21), 5);
+  assert.equal(animationFrameOffset(working, 15), 5);
+});
+
+test("paces each run cycle against the role's real movement speed", () => {
+  for (const role of Object.keys(ENGINEER_ANIMATIONS) as Array<keyof typeof ENGINEER_ANIMATIONS>) {
+    assert.equal(ENGINEER_ANIMATIONS[role].moving.frameRate, getEngineerDefinition(role).moveSpeed * 0.2);
+  }
 });
 
 test("selects the request mascot from its live type and workload", () => {
