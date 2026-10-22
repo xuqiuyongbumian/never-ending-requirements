@@ -45,7 +45,12 @@ class AnimationPreviewScene extends Phaser.Scene {
   preload(): void {
     for (const sheet of ENGINEER_SPRITE_SHEETS) {
       if (!this.textures.exists(sheet.key)) {
-        this.load.spritesheet(sheet.key, sheet.src, { frameWidth: sheet.frameWidth, frameHeight: sheet.frameHeight });
+        this.load.spritesheet(sheet.key, sheet.src, {
+          frameWidth: sheet.frameWidth,
+          frameHeight: sheet.frameHeight,
+          margin: sheet.margin,
+          spacing: sheet.spacing
+        });
       }
     }
   }

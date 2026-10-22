@@ -1,6 +1,7 @@
 import type { EngineerId, Requirement } from "../core/game";
 
 const asset = (path: string) => `${import.meta.env?.BASE_URL ?? "/"}${path}`;
+const engineerFrame = { frameWidth: 256, frameHeight: 256, margin: 2, spacing: 2 };
 
 export const GAME_ASSETS = {
   characters: {
@@ -80,45 +81,49 @@ export function runAnimationFrameOffset(
   return animationFrameOffset(definition, definition.start + Math.floor(distance / (moveSpeed / definition.frameRate) + phase));
 }
 
+export function runContactFrameIndex(definition: EngineerAnimationDefinition, frameIndex: number): number {
+  const offset = animationFrameOffset(definition, frameIndex);
+  const oppositeContact = Math.floor(definition.frameCount / 2);
+  const distanceToFirst = Math.min(offset, definition.frameCount - offset);
+  const distanceToOpposite = Math.abs(offset - oppositeContact);
+  return definition.start + (distanceToFirst <= distanceToOpposite ? 0 : oppositeContact);
+}
+
 export const ENGINEER_ANIMATION_SHEETS = {
   intern: {
     key: "engineer-anim-intern",
     src: asset("assets/game/animations/intern.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   frontend: {
     key: "engineer-anim-frontend",
     src: asset("assets/game/animations/frontend.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   backend: {
     key: "engineer-anim-backend",
     src: asset("assets/game/animations/backend.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   qa: {
     key: "engineer-anim-tester",
     src: asset("assets/game/animations/tester.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   agent: {
     key: "engineer-anim-agent",
     src: asset("assets/game/animations/agent.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 136,
   },
 } as const;
 
-// The 8-frame run loop uses a four-world-unit stride for a more responsive cadence.
+// A full run cycle covers 64 world units; the previous four-unit stride made feet cycle too fast.
+const RUN_CYCLE_DISTANCE = 64;
 const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   intern: 58,
   frontend: 62,
@@ -126,7 +131,8 @@ const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   qa: 57,
   agent: 70
 };
-const runFrameRate = (role: EngineerId): number => ENGINEER_MOVE_SPEEDS[role] * 0.25;
+const runFrameRate = (role: EngineerId, frameCount = 8): number =>
+  ENGINEER_MOVE_SPEEDS[role] * frameCount / RUN_CYCLE_DISTANCE;
 
 export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
   intern: {
@@ -136,7 +142,8 @@ export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, Engi
   },
   frontend: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("frontend") },
+    // The final source cell is a standing pose, so it is intentionally not part of the run loop.
+    moving: { start: 8, frameCount: 7, frameRate: runFrameRate("frontend", 7) },
     working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   backend: {
