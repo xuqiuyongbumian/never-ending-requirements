@@ -511,8 +511,7 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
 .menu-home-fullscreen { position: absolute; top: 18px; right: 18px; z-index: 2; display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid rgb(247 237 217 / 26%); border-radius: 11px; color: var(--text-primary); background: rgb(25 28 49 / 76%); cursor: pointer; font-size: 21px; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; }
 .menu-home-fullscreen:hover { border-color: var(--accent-gold); color: var(--accent-gold); background: rgb(25 28 49 / 94%); }
 
-/* Match the letterboxed Phaser Scale.FIT canvas so its fallback backdrop has no crop seam. */
-#stage.is-battle-mode { background: var(--battle-background, var(--studio-background)) center / contain no-repeat var(--game-bg); }
+#stage.is-battle-mode { background: var(--battle-background, var(--studio-background)) center / cover no-repeat var(--game-bg); }
 .battle-ui::before { background: linear-gradient(180deg, rgb(19 22 39 / 32%) 0%, transparent 20%, transparent 68%, rgb(19 22 39 / 38%) 100%); }
 .battle-header { width: min(1580px, calc(100% - 32px)); background: rgb(25 28 49 / 82%); box-shadow: 0 12px 32px rgb(8 11 24 / 25%), inset 0 1px rgb(255 255 255 / 5%); backdrop-filter: blur(8px); }
 .metric-pill small, .status-copy { font-size: 12px; }
