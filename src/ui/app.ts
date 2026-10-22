@@ -28,7 +28,7 @@ import { AudioEngine } from "../audio/audio-engine";
 import { withAudioPatch } from "../audio/audio-settings";
 import { audioPanelMarkup, bindAudioPanel, syncAudioPanel } from "./audio-panel";
 import { CommunityPanel } from "./community";
-import { evaluateCurrentRun, localPersonalBest } from "./local-stats";
+import { buildLocalAchievementWall, evaluateCurrentRun, localPersonalBest } from "./local-stats";
 import { summarizeRun, TelemetryReporter } from "./telemetry";
 import { calculateRunScore } from "../../shared/scoring.ts";
 
@@ -74,6 +74,23 @@ export class GameApp {
     this.audio.setMusicMood({ rush: false, incident: false, urgent: false });
     this.audio.setDuck(1);
     const personalBest = localPersonalBest();
+    const achievementWall = buildLocalAchievementWall();
+    const unlockedAchievements = achievementWall.achievements
+      .filter((achievement) => achievement.unlocked)
+      .sort((a, b) => b.points - a.points);
+    const showcased = unlockedAchievements.length > 0
+      ? unlockedAchievements.slice(0, 6)
+      : achievementWall.achievements.slice().sort((a, b) => b.progress - a.progress).slice(0, 3);
+    const achievementCards = showcased.map((achievement) => `
+              <article class="menu-achievement tier-${achievement.tier} ${achievement.unlocked ? "is-unlocked" : "is-locked"}">
+                <span class="menu-achievement-icon">${escapeText(achievement.icon)}</span>
+                <div class="menu-achievement-copy">
+                  <strong>${escapeText(achievement.name)}${achievement.unlocked ? " ✓" : ""}</strong>
+                  <p>${escapeText(achievement.unlocked ? achievement.description : achievement.hint)}</p>
+                  <span class="menu-achievement-progress"><i style="width:${Math.round(Math.max(0, Math.min(1, achievement.progress)) * 100)}%"></i></span>
+                </div>
+                <span class="menu-achievement-points">+${achievement.points}</span>
+              </article>`).join("");
     this.root.innerHTML = `
       <section class="menu-screen">
         <div class="menu-grid" aria-hidden="true"></div>
@@ -88,6 +105,21 @@ export class GameApp {
             <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
             <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
           </article>
+          <section class="menu-achievements" aria-label="成就陈列">
+            <header class="menu-achievements-head">
+              <div class="menu-achievements-title">
+                <span class="menu-achievements-kicker">ACHIEVEMENTS</span>
+                <strong>成就陈列</strong>
+              </div>
+              <div class="menu-achievements-stats">
+                <span><b>${achievementWall.unlockedCount}</b><small>/${achievementWall.achievements.length} 已解锁</small></span>
+                <span><b>${achievementWall.totalPoints}</b><small>成就点数</small></span>
+                <button class="menu-ghost-button" id="open-achievements-wall" type="button">完整成就墙 ↗</button>
+              </div>
+            </header>
+            <div class="menu-achievement-grid">${achievementCards}</div>
+            ${achievementWall.runs === 0 ? `<p class="menu-achievements-empty">还没有结算记录，完成第一局即可点亮成就。</p>` : ""}
+          </section>
           <div class="era-preview">
             <div><span class="era-step">01</span><strong>手搓时代</strong><small>实习生 · 前端</small></div>
             <span class="era-arrow">→</span>
@@ -115,6 +147,7 @@ export class GameApp {
       saveNickname(nicknameInput.value);
       this.telemetry.setNickname(nicknameInput.value);
     });
+    this.root.querySelector("#open-achievements-wall")?.addEventListener("click", () => this.community.openAchievements());
     this.root.querySelector("#open-leaderboard")?.addEventListener("click", () => this.community.openLeaderboard());
     this.root.querySelector("#open-achievements")?.addEventListener("click", () => this.community.openAchievements());
   }
