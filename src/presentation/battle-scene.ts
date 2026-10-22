@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
+  BASE_FRONT_EDGE,
   getEngineerDefinition,
   getInterpolatedWorldX,
   prioritizeRequirement,
@@ -623,7 +624,16 @@ export class BattleScene extends Phaser.Scene {
     const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
     const unitX = worldX / WORLD_WIDTH * WIDTH;
     const prioritized = state.prioritizedRequestId === request.id;
-    const mascotY = FLOOR_Y - REQUEST_MASCOT_LIFT;
+    const beingWorked = state.engineers.some((engineer) => engineer.targetRequestId === request.id && engineer.action === "working");
+    const mascotY = FLOOR_Y - REQUEST_MASCOT_LIFT + Math.sin(state.elapsed * (beingWorked ? 7 : 3) + request.id) * (beingWorked ? 2.8 : 1.4);
+    if (request.remainingWork < view.lastRemainingWork - 0.01 && state.elapsed - view.lastImpactAt >= 0.28) {
+      view.lastImpactAt = state.elapsed;
+      this.tweens.killTweensOf(view.mascot);
+      view.mascot.setScale(view.mascotScale);
+      const hitScale = view.isBoss ? 1.12 : 1.07;
+      this.tweens.add({ targets: view.mascot, scaleX: view.mascotScale * hitScale, scaleY: view.mascotScale / hitScale, duration: view.isBoss ? 125 : 95, yoyo: true, ease: "Sine.Out" });
+    }
+    view.lastRemainingWork = request.remainingWork;
     if (view.mascot.x !== unitX) view.mascot.setX(unitX);
     if (view.mascot.y !== mascotY) view.mascot.setY(mascotY);
     if (view.cardX !== cardPosition.x || view.cardY !== cardPosition.y) {
@@ -657,9 +667,13 @@ export class BattleScene extends Phaser.Scene {
       view.lastRemainingText = remainingText;
       view.remaining.setText(remainingText);
     }
-    if (view.lastPrioritized !== prioritized) {
+    const eta = Math.max(0, request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed * (beingWorked ? 0.55 : 1));
+    const urgent = eta <= 10;
+    if (view.lastPrioritized !== prioritized || view.lastUrgent !== urgent) {
       view.lastPrioritized = prioritized;
-      this.drawRequestPlate(view, request.isFinal, prioritized);
+      view.lastUrgent = urgent;
+      view.remaining.setColor(urgent ? "#ff7887" : "#f7edd9");
+      this.drawRequestPlate(view, request.isFinal, prioritized, urgent);
     }
     const progressWidth = Math.max(0, Math.round((view.cardWidth - 32) * (1 - request.remainingWork / request.totalWork) * 100) / 100);
     if (view.progressWidth !== progressWidth) {
@@ -668,21 +682,22 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean): void {
+  private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean, urgent = false): void {
     const { plate, accent } = view;
     const width = view.cardWidth;
     const height = view.cardHeight;
     const halfWidth = width / 2;
     const halfHeight = height / 2;
     plate.clear();
-    if (isFinal || view.isBoss) {
+    if (isFinal || view.isBoss || urgent) {
       plate.fillStyle(view.isBoss ? 0xff5a4d : 0xffd27d, view.isBoss ? 0.16 : 0.1)
         .fillRoundedRect(-halfWidth - 4, -halfHeight - 4, width + 8, height + 8, 11);
     }
     plate.fillStyle(0x191c31, view.isBoss ? 0.95 : 0.86).fillRoundedRect(-halfWidth, -halfHeight, width, height, 9);
     plate.fillStyle(0x282b43, view.isBoss ? 0.98 : 0.91).fillRoundedRect(-halfWidth + 1, -halfHeight + 1, width - 2, height - 2, 8);
-    plate.fillStyle(accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
-    plate.lineStyle(prioritized || isFinal || view.isBoss ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal || view.isBoss ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
+    plate.fillStyle(urgent ? 0xff6b83 : accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
+    const border = urgent ? 0xff6b83 : prioritized ? 0xffc875 : accent;
+    plate.lineStyle(prioritized || isFinal || view.isBoss || urgent ? 2 : 1, border, prioritized || isFinal || view.isBoss || urgent ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
     plate.fillStyle(0x555a73).fillRoundedRect(-halfWidth + 12, halfHeight - 13, width - 24, view.barHeight + 1, 4);
   }
 
