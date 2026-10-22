@@ -253,7 +253,7 @@ export class BattleScene extends Phaser.Scene {
           .setVisible(false);
         view = {
           sprite,
-          shadow: this.add.ellipse(0, FLOOR_Y - 2, 52, 12, 0x1b2929, 0.25).setDepth(4),
+          shadow: this.add.ellipse(0, FLOOR_Y + 2, 36, 8, 0x1b2929, 0.16).setDepth(4),
           aura: this.add.ellipse(0, 0, 78, 92, 0x66d9fa, 0.13).setDepth(4.5).setVisible(engineer.role === "agent"),
           bubble,
           bubbleLabel,
@@ -322,7 +322,7 @@ export class BattleScene extends Phaser.Scene {
     }
     view.lastWorldX = worldX;
     if (view.sprite.flipX !== view.facingLeft) view.sprite.setFlipX(view.facingLeft);
-    view.shadow.setPosition(renderX, FLOOR_Y + formation.y - 2);
+    view.shadow.setPosition(renderX, FLOOR_Y + formation.y + 2);
     view.aura.setPosition(renderX, FLOOR_Y + formation.y - 48 + hover);
     // Bubbles are noisy when every engineer talks at once: only the team member
     // the player explicitly prioritised, or someone fighting the boss, speaks.
