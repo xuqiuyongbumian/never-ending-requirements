@@ -23,8 +23,10 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const FLOOR_Y = 536;
 const STRIDE_PHASE_STEP = 0.61803398875;
-const MOTION_STATE_STABILITY_MS = 80;
-const REQUEST_Y = [310, 370, 430] as const;
+const REQUEST_CARD_WIDTH = 224;
+const REQUEST_CARD_HEIGHT = 72;
+const REQUEST_CARD_ROW_GAP = 76;
+const REQUEST_CARD_BASE_OFFSET = 112;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
   bug: "缺陷",
@@ -38,8 +40,6 @@ interface EngineerView {
   aura: Phaser.GameObjects.Ellipse;
   activity: Phaser.GameObjects.Text;
   motionAction: Engineer["action"] | null;
-  motionPendingAction: Engineer["action"] | null;
-  motionPendingAt: number;
   motionPhaseInitialized: boolean;
   lastWorldX: number | null;
   facingLeft: boolean;
@@ -49,8 +49,9 @@ interface EngineerView {
 
 interface RequestView {
   container: Phaser.GameObjects.Container;
-  plate: Phaser.GameObjects.Graphics;
   mascot: Phaser.GameObjects.Image;
+  connector: Phaser.GameObjects.Graphics;
+  plate: Phaser.GameObjects.Graphics;
   title: Phaser.GameObjects.Text;
   code: Phaser.GameObjects.Text;
   remaining: Phaser.GameObjects.Text;
@@ -65,6 +66,14 @@ interface RequestView {
   lastPrioritized: boolean | null;
   completing: boolean;
   introPlayed: boolean;
+  cardX: number;
+  cardY: number;
+  mascotScale: number;
+}
+
+interface RequestCardPosition {
+  x: number;
+  y: number;
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -113,7 +122,7 @@ export class BattleScene extends Phaser.Scene {
     this.drawLane();
     for (const [x, label] of [[160, "研发中心"], [1120, "需求入口"]] as const) {
       this.add.text(x, FLOOR_Y - 18, label, {
-        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
+        fontFamily: "sans-serif", fontSize: "13px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
       }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(2);
     }
     this.lastHudUpdate = 0;
@@ -194,12 +203,10 @@ export class BattleScene extends Phaser.Scene {
           shadow: this.add.ellipse(0, FLOOR_Y - 2, 52, 12, 0x1b2929, 0.25).setDepth(4),
           aura: this.add.ellipse(0, 0, 78, 92, 0x66d9fa, 0.13).setDepth(4.5).setVisible(engineer.role === "agent"),
           activity: this.add.text(0, 0, "</>", {
-            fontFamily: "ui-monospace, monospace", fontSize: "15px", fontStyle: "bold",
-            color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
+            fontFamily: "ui-monospace, monospace", fontSize: "16px", fontStyle: "bold",
+            color: activityColor(engineer.role), stroke: "#20243a", strokeThickness: 4
           }).setOrigin(0.5).setDepth(6).setVisible(false),
           motionAction: null,
-          motionPendingAction: null,
-          motionPendingAt: 0,
           motionPhaseInitialized: false,
           lastWorldX: null,
           facingLeft: false,
@@ -223,13 +230,15 @@ export class BattleScene extends Phaser.Scene {
   private updateEngineerView(view: EngineerView, engineer: Engineer, state: BattleState): void {
     const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
     const formation = formationOffset(engineer.lane);
-    const x = worldX / WORLD_WIDTH * WIDTH + formation.x;
+    // Core world X is authoritative. Never add a lane-only horizontal render offset:
+    // movement, work range, target links and visible feet must share this coordinate.
+    const x = worldX / WORLD_WIDTH * WIDTH;
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
     const workRushScale = state.elapsed < state.rushUntil
       ? 1.55
       : state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
-    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.paused, state.speed, workRushScale);
+    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.paused || state.pendingEvent !== null, state.speed, workRushScale);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     const spriteY = FLOOR_Y + formation.y + hover;
     if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
@@ -245,11 +254,14 @@ export class BattleScene extends Phaser.Scene {
     view.aura.setPosition(x, FLOOR_Y + formation.y - 48 + hover);
     if (view.activity.visible !== working) view.activity.setVisible(working);
     if (working) {
-      const activity = ({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role];
+      const activity = ({ intern: "DOC", frontend: "UI ✦", backend: "API ↕", qa: "QA ✓", agent: "AI ✧" })[engineer.role];
       if (view.activity.text !== activity) view.activity.setText(activity);
       const activityX = x + 3;
       const activityY = FLOOR_Y + formation.y - (engineer.role === "agent" ? 158 : 146) + hover;
       if (view.activity.x !== activityX || view.activity.y !== activityY) view.activity.setPosition(activityX, activityY);
+      view.activity.setAlpha(0.88 + (Math.sin(state.elapsed * 5 + engineer.id) + 1) * 0.06);
+    } else {
+      view.activity.setAlpha(1);
     }
   }
 
@@ -262,34 +274,20 @@ export class BattleScene extends Phaser.Scene {
     speed: BattleState["speed"],
     workRushScale: number
   ): void {
-    let displayedAction = action;
-    if (view.motionAction !== null && action !== view.motionAction) {
-      if (view.motionPendingAction !== action) {
-        view.motionPendingAction = action;
-        view.motionPendingAt = this.time.now;
-      }
-      if (this.time.now - view.motionPendingAt < MOTION_STATE_STABILITY_MS) {
-        displayedAction = view.motionAction;
-      }
-    } else {
-      view.motionPendingAction = null;
-    }
-
-    if (view.motionAction !== displayedAction) {
-      view.sprite.play(engineerAnimationKey(role, displayedAction));
+    if (view.motionAction !== action) {
+      view.sprite.play(engineerAnimationKey(role, action));
       // Offset each actor's stride whenever they start moving so a team does
       // not snap into the same pose in lockstep. Keep the first idle loop
       // desynchronized too, while action transitions remain deterministic.
-      if (displayedAction === "moving" || !view.motionPhaseInitialized) {
+      if (action === "moving" || !view.motionPhaseInitialized) {
         view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
       }
       view.motionPhaseInitialized = true;
-      view.motionAction = displayedAction;
-      view.motionPendingAction = null;
+      view.motionAction = action;
       view.motionTimeScale = -1;
     }
     // Ship It and other rush effects boost work, not travel speed.
-    const actionScale = displayedAction === "working" ? workRushScale : 1;
+    const actionScale = action === "working" ? workRushScale : 1;
     const timeScale = speed * actionScale;
     if (view.motionTimeScale !== timeScale) {
       view.sprite.anims.timeScale = timeScale;
@@ -305,6 +303,7 @@ export class BattleScene extends Phaser.Scene {
   private syncRequests(state: BattleState): void {
     const present = this.presentRequestIds;
     present.clear();
+    const cardPositions = this.getRequestCardPositions(state);
     for (const request of state.requests) {
       present.add(request.id);
       let view = this.requests.get(request.id);
@@ -312,32 +311,58 @@ export class BattleScene extends Phaser.Scene {
         view = this.createRequestView(request);
         this.requests.set(request.id, view);
       }
-      this.updateRequestView(view, request, state);
+      this.updateRequestView(view, request, state, cardPositions.get(request.id) ?? { x: WIDTH / 2, y: FLOOR_Y - REQUEST_CARD_BASE_OFFSET });
     }
     for (const [id, view] of this.requests) {
       if (present.has(id)) continue;
       if (view.completing) continue;
       view.container.destroy(true);
+      view.mascot.destroy();
+      view.connector.destroy();
       this.requests.delete(id);
     }
+  }
+
+  private getRequestCardPositions(state: BattleState): Map<number, RequestCardPosition> {
+    const rows: number[][] = [];
+    const positions = new Map<number, RequestCardPosition>();
+    const requests = state.requests.map((request) => {
+      const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
+      const unitX = worldX / WORLD_WIDTH * WIDTH;
+      return { request, x: Math.max(REQUEST_CARD_WIDTH / 2 + 12, Math.min(WIDTH - REQUEST_CARD_WIDTH / 2 - 12, unitX)) };
+    }).sort((a, b) => a.x - b.x || a.request.id - b.request.id);
+
+    for (const { request, x } of requests) {
+      let row = rows.findIndex((claimed) => claimed.every((claimedX) => Math.abs(claimedX - x) >= REQUEST_CARD_WIDTH + 16));
+      if (row < 0) row = rows.length;
+      rows[row] ??= [];
+      rows[row].push(x);
+      positions.set(request.id, {
+        x,
+        y: FLOOR_Y - REQUEST_CARD_BASE_OFFSET - row * REQUEST_CARD_ROW_GAP
+      });
+    }
+    return positions;
   }
 
   private createRequestView(request: Requirement): RequestView {
     const plate = this.add.graphics();
     const textureKey = requestTexture(request);
-    const mascot = this.add.image(-68, 0, textureKey).setOrigin(0.5);
-    mascot.setScale(Math.min(68 / mascot.width, 68 / mascot.height));
-    const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "12px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
-    const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#b4bbcc" }).setOrigin(0, 0.5);
-    const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
-    const progress = this.add.rectangle(-39, 16.5, 0, 5, 0x45aaa0).setOrigin(0, 0.5);
-    const priorityMark = this.add.text(88, -15, "★ 优先", {
-      fontFamily: "sans-serif", fontSize: "9px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3
+    const connector = this.add.graphics().setDepth(2);
+    const mascot = this.add.image(0, FLOOR_Y, textureKey).setOrigin(0.5, 1).setDepth(5);
+    const mascotScale = Math.min(70 / mascot.width, 70 / mascot.height);
+    mascot.setScale(mascotScale);
+    const title = this.add.text(-96, -17, request.title, { fontFamily: "sans-serif", fontSize: "14px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
+    const code = this.add.text(-96, 7, `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`, { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: "#b4bbcc" }).setOrigin(0, 0.5);
+    const remaining = this.add.text(96, 7, "", { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
+    const progress = this.add.rectangle(-96, 27, 0, 7, 0x45aaa0).setOrigin(0, 0.5);
+    const priorityMark = this.add.text(96, -17, "★ 优先", {
+      fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3
     }).setOrigin(1, 0.5).setVisible(false);
-    const container = this.add.container(0, 0, [plate, mascot, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 4 : 3);
+    const container = this.add.container(0, 0, [plate, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 6 : 5);
     const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;
     progress.setFillStyle(accent);
-    plate.setInteractive(new Phaser.Geom.Rectangle(-55, -26, 151, 49), Phaser.Geom.Rectangle.Contains);
+    plate.setInteractive(new Phaser.Geom.Rectangle(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT), Phaser.Geom.Rectangle.Contains);
     plate.on("pointerdown", (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
       event.stopPropagation();
       if (!this.state) return;
@@ -346,7 +371,7 @@ export class BattleScene extends Phaser.Scene {
       updateHud?.(this.state);
     });
     const view: RequestView = {
-      container, plate, mascot, title, code, remaining, progress, priorityMark,
+      container, mascot, connector, plate, title, code, remaining, progress, priorityMark,
       id: request.id,
       requestCode: request.code,
       accent,
@@ -355,25 +380,37 @@ export class BattleScene extends Phaser.Scene {
       lastRemainingText: "",
       lastPrioritized: null,
       completing: false,
-      introPlayed: false
+      introPlayed: false,
+      cardX: Number.NaN,
+      cardY: Number.NaN,
+      mascotScale
     };
     this.drawRequestPlate(view, request.isFinal, false);
     return view;
   }
 
-  private updateRequestView(view: RequestView, request: Requirement, state: BattleState): void {
+  private updateRequestView(view: RequestView, request: Requirement, state: BattleState, cardPosition: RequestCardPosition): void {
     const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
-    const x = worldX / WORLD_WIDTH * WIDTH;
-    const y = REQUEST_Y[request.id % REQUEST_Y.length];
+    const unitX = worldX / WORLD_WIDTH * WIDTH;
     const prioritized = state.prioritizedRequestId === request.id;
-    const clampedX = Math.min(WIDTH - 104, Math.max(106, x));
-    if (view.container.x !== clampedX || view.container.y !== y) view.container.setPosition(clampedX, y);
-    const depth = prioritized ? 6 : request.isFinal ? 4 : 3;
+    if (view.mascot.x !== unitX) view.mascot.setX(unitX);
+    if (view.mascot.y !== FLOOR_Y) view.mascot.setY(FLOOR_Y);
+    if (view.cardX !== cardPosition.x || view.cardY !== cardPosition.y) {
+      view.cardX = cardPosition.x;
+      view.cardY = cardPosition.y;
+      view.container.setPosition(cardPosition.x, cardPosition.y);
+    }
+    view.connector.clear();
+    view.connector.lineStyle(2, prioritized ? 0xffc875 : view.accent, prioritized ? 0.62 : 0.42)
+      .lineBetween(cardPosition.x, cardPosition.y + REQUEST_CARD_HEIGHT / 2, unitX, FLOOR_Y - view.mascot.displayHeight + 4);
+    const depth = prioritized ? 7 : request.isFinal ? 6 : 5;
     if (view.container.depth !== depth) view.container.setDepth(depth);
     if (request.isFinal && !view.introPlayed) {
       view.introPlayed = true;
       view.container.setScale(0.82).setAlpha(0);
       this.tweens.add({ targets: view.container, scale: 1.16, alpha: 1, duration: 480, ease: "Back.Out" });
+      view.mascot.setScale(view.mascotScale * 0.82).setAlpha(0);
+      this.tweens.add({ targets: view.mascot, scaleX: view.mascotScale, scaleY: view.mascotScale, alpha: 1, duration: 480, ease: "Back.Out" });
     }
     if (view.textureKey !== requestTexture(request)) {
       view.textureKey = requestTexture(request);
@@ -389,23 +426,22 @@ export class BattleScene extends Phaser.Scene {
       view.lastPrioritized = prioritized;
       this.drawRequestPlate(view, request.isFinal, prioritized);
     }
-    const progressWidth = Math.max(0, Math.round(123 * (1 - request.remainingWork / request.totalWork) * 100) / 100);
+    const progressWidth = Math.max(0, Math.round((REQUEST_CARD_WIDTH - 32) * (1 - request.remainingWork / request.totalWork) * 100) / 100);
     if (view.progressWidth !== progressWidth) {
       view.progressWidth = progressWidth;
-      view.progress.setSize(progressWidth, 5);
+      view.progress.setSize(progressWidth, 7);
     }
   }
 
   private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean): void {
     const { plate, accent } = view;
     plate.clear();
-    if (isFinal) plate.fillStyle(0xffd27d, 0.1).fillRoundedRect(-60, -31, 161, 59, 9);
-    view.plate.fillStyle(0x191c31, 0.82).fillRect(-55, -22, 151, 49);
-    view.plate.fillStyle(0x282b43, 0.96).fillRect(-55, -26, 151, 49);
-    view.plate.fillStyle(accent).fillRect(-55, -26, 151, 4);
-    view.plate.lineStyle(prioritized || isFinal ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal ? 0.9 : 0.6).strokeRect(-55, -26, 151, 49);
-    view.plate.fillStyle(0xb4bbcc, 0.25).fillRect(-39, 11, 123, 2);
-    view.plate.fillStyle(0x555a73).fillRect(-39, 14, 123, 5);
+    if (isFinal) plate.fillStyle(0xffd27d, 0.1).fillRoundedRect(-REQUEST_CARD_WIDTH / 2 - 4, -REQUEST_CARD_HEIGHT / 2 - 4, REQUEST_CARD_WIDTH + 8, REQUEST_CARD_HEIGHT + 8, 11);
+    plate.fillStyle(0x191c31, 0.94).fillRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT, 9);
+    plate.fillStyle(0x282b43, 0.98).fillRoundedRect(-REQUEST_CARD_WIDTH / 2 + 1, -REQUEST_CARD_HEIGHT / 2 + 1, REQUEST_CARD_WIDTH - 2, REQUEST_CARD_HEIGHT - 2, 8);
+    plate.fillStyle(accent).fillRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, 5, 3);
+    plate.lineStyle(prioritized || isFinal ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal ? 0.9 : 0.6).strokeRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT, 9);
+    plate.fillStyle(0x555a73).fillRoundedRect(-96, 23, REQUEST_CARD_WIDTH - 32, 8, 4);
   }
 
   private syncPriorityLink(state: BattleState): void {
@@ -423,10 +459,10 @@ export class BattleScene extends Phaser.Scene {
       if (!engineer) continue;
       const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
       const formation = formationOffset(engineer.lane);
-      const engineerX = worldX / WORLD_WIDTH * WIDTH + formation.x;
+      const engineerX = worldX / WORLD_WIDTH * WIDTH;
       this.priorityLink.lineStyle(2, 0xffc875, engineer.action === "working" ? 0.6 : 0.34)
-        .lineBetween(requestView.container.x, requestView.container.y + 26, engineerX, FLOOR_Y + formation.y - 96);
-      this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.container.x, requestView.container.y + 26, 3);
+        .lineBetween(requestView.mascot.x, FLOOR_Y - 48, engineerX, FLOOR_Y + formation.y - 96);
+      this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.mascot.x, FLOOR_Y - 48, 3);
     }
   }
 
@@ -436,15 +472,16 @@ export class BattleScene extends Phaser.Scene {
     for (const event of events) {
       if (event.type !== "request_complete" || typeof event.detail.request !== "string") continue;
       const view = [...this.requests.values()].find((candidate) => candidate.requestCode === event.detail.request);
-      const x = view?.container.x ?? WIDTH / 2;
-      const y = view?.container.y ?? FLOOR_Y - 80;
+      const x = view?.mascot.x ?? WIDTH / 2;
+      const y = FLOOR_Y - 82;
       if (view) {
         view.completing = true;
         view.priorityMark.setVisible(false);
         view.code.setText("验收通过 · CLEAR");
         view.remaining.setText("✓ 已完成");
-        view.progress.setFillStyle(0x57cc91, 0.95).setSize(123, 5);
-        view.progressWidth = 123;
+        view.progress.setFillStyle(0x57cc91, 0.95).setSize(REQUEST_CARD_WIDTH - 32, 7);
+        view.progressWidth = REQUEST_CARD_WIDTH - 32;
+        view.connector.clear();
         this.tweens.add({
           targets: view.container,
           alpha: 0,
@@ -453,9 +490,12 @@ export class BattleScene extends Phaser.Scene {
           ease: "Cubic.In",
           onComplete: () => {
             view.container.destroy(true);
+            view.mascot.destroy();
+            view.connector.destroy();
             this.requests.delete(view.id);
           }
         });
+        this.tweens.add({ targets: view.mascot, alpha: 0, scaleX: view.mascotScale * 1.1, scaleY: view.mascotScale * 1.1, duration: 390, ease: "Cubic.In" });
       }
       const check = this.add.text(x, y - 38, "✓", { fontFamily: "sans-serif", fontSize: "28px", fontStyle: "bold", color: "#42ad79", stroke: "#fff8df", strokeThickness: 6 }).setOrigin(0.5).setDepth(9);
       const particles = this.add.graphics().setPosition(x, y - 18).setDepth(8);
@@ -474,10 +514,12 @@ export class BattleScene extends Phaser.Scene {
   }
 }
 
-function formationOffset(lane: number): { x: number; y: number } {
-  const columns = 5;
-  const column = (lane % columns) - 2;
-  const row = Math.floor(lane / columns) % 4;
-  const rowStagger = row % 2 === 0 ? 0 : 42;
-  return { x: column * 96 + rowStagger, y: row * 10 };
+function formationOffset(lane: number): { y: number } {
+  const depthLane = (lane % 5) - 2;
+  const formationRow = Math.floor(lane / 5) % 4;
+  return { y: depthLane * 6 + formationRow * 4 };
+}
+
+function activityColor(role: Engineer["role"]): string {
+  return ({ intern: "#ffce80", frontend: "#b79cff", backend: "#85c3ff", qa: "#91e4b2", agent: "#92a7ff" })[role];
 }
