@@ -92,30 +92,35 @@ export function runContactFrameIndex(definition: EngineerAnimationDefinition, fr
 export const ENGINEER_ANIMATION_SHEETS = {
   intern: {
     key: "engineer-anim-intern",
+    cdnSrc: "https://ali.static.yximgs.com/kos/nlav10567/90yicz0a1792679186683.png",
     src: asset("assets/game/animations/intern.png"),
     ...engineerFrame,
     displayHeight: 126,
   },
   frontend: {
     key: "engineer-anim-frontend",
+    cdnSrc: "https://ali.static.yximgs.com/kos/nlav10567/nmx1qq7r1792679185779.png",
     src: asset("assets/game/animations/frontend.png"),
     ...engineerFrame,
     displayHeight: 126,
   },
   backend: {
     key: "engineer-anim-backend",
+    cdnSrc: "https://ali.static.yximgs.com/kos/nlav10567/oogeipzm1792679184854.png",
     src: asset("assets/game/animations/backend.png"),
     ...engineerFrame,
     displayHeight: 126,
   },
   qa: {
     key: "engineer-anim-tester",
+    cdnSrc: "https://ali.static.yximgs.com/kos/nlav10567/7im91x8l1792679187484.png",
     src: asset("assets/game/animations/tester.png"),
     ...engineerFrame,
     displayHeight: 126,
   },
   agent: {
     key: "engineer-anim-agent",
+    cdnSrc: "https://ali.static.yximgs.com/kos/nlav10567/35l9iq3x1792679183786.png",
     src: asset("assets/game/animations/agent.png"),
     ...engineerFrame,
     displayHeight: 136,

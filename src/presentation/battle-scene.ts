@@ -56,6 +56,11 @@ const ACTIVITY_LABEL: Record<Engineer["role"], string> = {
 const BUBBLE_WIDTH = 96;
 const BUBBLE_HEIGHT = 52;
 /** Distance from the bubble centre down to the tail tip. */
+// ?assets=local keeps the game fully offline: sprite sheets come from the build.
+const USE_CDN_SPRITE_SHEETS = typeof location === "undefined"
+  ? true
+  : !/[?&]assets=local\b/.test(location.search);
+
 const BUBBLE_TAIL_DROP = 12;
 const BUBBLE_HEAD_GAP = 6;
 const FACING_DEAD_ZONE = 8;
@@ -140,15 +145,27 @@ export class BattleScene extends Phaser.Scene {
     for (const asset of GAME_TEXTURES) {
       if (!this.textures.exists(asset.key)) this.load.image(asset.key, asset.src);
     }
+    const sheetOptions = (sheet: (typeof ENGINEER_SPRITE_SHEETS)[number]) => ({
+      frameWidth: sheet.frameWidth,
+      frameHeight: sheet.frameHeight,
+      margin: sheet.margin,
+      spacing: sheet.spacing
+    });
+    // Sprite sheets live on the CDN so a redeploy of the app bundle is not
+    // required to refresh the art. A failed CDN fetch falls back to the copy
+    // bundled with the build.
+    const retried = new Set<string>();
+    this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
+      const sheet = ENGINEER_SPRITE_SHEETS.find((candidate) => candidate.key === file.key);
+      if (!sheet || retried.has(sheet.key)) return;
+      retried.add(sheet.key);
+      this.load.spritesheet(sheet.key, sheet.src, sheetOptions(sheet));
+      this.load.start();
+    });
     for (const sheet of ENGINEER_SPRITE_SHEETS) {
-      if (!this.textures.exists(sheet.key)) {
-        this.load.spritesheet(sheet.key, sheet.src, {
-          frameWidth: sheet.frameWidth,
-          frameHeight: sheet.frameHeight,
-          margin: sheet.margin,
-          spacing: sheet.spacing
-        });
-      }
+      if (this.textures.exists(sheet.key)) continue;
+      const source = USE_CDN_SPRITE_SHEETS && sheet.cdnSrc ? sheet.cdnSrc : sheet.src;
+      this.load.spritesheet(sheet.key, source, sheetOptions(sheet));
     }
   }
 
