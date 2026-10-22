@@ -118,9 +118,7 @@ export const ENGINEER_ANIMATION_SHEETS = {
   },
 } as const;
 
-// The 8-frame run loop is paced to each role's actual travel speed. This keeps
-// the feet from skating when a slower role and a faster role share one scene.
-// Mirrored from ENGINEER_DEFS in game.ts and checked in game-assets.test.ts.
+// The 8-frame run loop uses a four-world-unit stride for a more responsive cadence.
 const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   intern: 58,
   frontend: 62,
@@ -128,7 +126,7 @@ const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   qa: 57,
   agent: 70
 };
-const runFrameRate = (role: EngineerId): number => ENGINEER_MOVE_SPEEDS[role] * 0.2;
+const runFrameRate = (role: EngineerId): number => ENGINEER_MOVE_SPEEDS[role] * 0.25;
 
 export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
   intern: {
