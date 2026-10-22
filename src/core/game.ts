@@ -84,6 +84,17 @@ export interface ChangeEvent {
   choices: readonly ChangeChoice[];
 }
 
+export interface BattlePlan {
+  profile: string;
+  requestTimes: readonly number[];
+  requests: readonly Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">[];
+  bossAt: number;
+  boss: Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">;
+  eventTimes: readonly number[];
+  events: readonly ChangeEvent[];
+  randomSeed: number;
+}
+
 export interface GameTelemetryEvent {
   type: string;
   at: number;
@@ -104,6 +115,7 @@ export interface BattleState {
   nextEngineerId: number;
   nextRequestId: number;
   requestScheduleIndex: number;
+  plan: BattlePlan;
   bossSpawned: boolean;
   eventScheduleIndex: number;
   nextEventAt: number;
@@ -180,21 +192,27 @@ const REQUEST_SCHEDULE: readonly Omit<Requirement, "id" | "x" | "remainingWork" 
   { code: "R-011", title: "发布前验收", kind: "bug", speed: 34, totalWork: 360, budgetReward: 95, experienceReward: 60, severity: 20, isFinal: false },
   { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", speed: 34, totalWork: 1500, budgetReward: 180, experienceReward: 80, severity: 100, isFinal: true }
 ];
-const BOSS_DEFINITION: Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork"> = {
-  code: "BOSS-01",
-  title: "专项大需求：大促作战室",
-  kind: "feature",
-  speed: 22,
-  totalWork: 900,
-  budgetReward: 150,
-  experienceReward: 90,
-  severity: 45,
-  isFinal: false,
-  isBoss: true
-};
-const BOSS_SPAWN_TIME = 150;
 const REQUEST_SPAWN_TIMES = [5, 24, 43, 62, 81, 100, 119, 138, 157, 176, 206, 240] as const;
 const EVENT_SPAWN_TIMES = [38, 82, 126, 170, 214, 258] as const;
+type CoreRequestKind = Exclude<RequestKind, "launch">;
+interface WaveProfile {
+  id: string;
+  kinds: readonly CoreRequestKind[];
+  urgent?: boolean;
+}
+
+const WAVE_PROFILES: readonly WaveProfile[] = [
+  { id: "feature-sprint", kinds: ["feature", "feature", "feature", "bug", "feature", "infra", "feature", "bug", "feature", "infra"] },
+  { id: "bug-bash", kinds: ["bug", "bug", "feature", "bug", "bug", "infra", "bug", "feature", "bug", "infra"] },
+  { id: "platform-migration", kinds: ["infra", "infra", "bug", "infra", "feature", "infra", "infra", "bug", "infra", "feature"] },
+  { id: "mixed-release", kinds: ["feature", "infra", "bug", "feature", "bug", "infra", "feature", "infra", "bug", "feature"] },
+  { id: "incident-response", kinds: ["bug", "feature", "infra", "bug", "feature", "infra", "bug", "feature", "infra", "bug"], urgent: true }
+];
+const REQUEST_TITLES: Record<CoreRequestKind, readonly string[]> = {
+  feature: ["核心页面体验升级", "消息中心交互改版", "智能摘要助手", "经营数据看板", "结账流程优化"],
+  bug: ["登录状态回归", "边界输入校验", "支付结果不一致", "验收阻塞问题", "断线重试异常"],
+  infra: ["鉴权与服务接入", "任务队列扩容", "核心链路压测", "监控告警接入", "缓存策略升级"]
+};
 
 export const CHANGE_EVENTS: readonly ChangeEvent[] = [
   {
@@ -237,11 +255,88 @@ export const CHANGE_EVENTS: readonly ChangeEvent[] = [
 
 const definitionById = new Map(ENGINEER_DEFS.map((definition) => [definition.id, definition]));
 
-function eventTimeAt(index: number, seed: number): number {
-  const base = EVENT_SPAWN_TIMES[index];
-  if (base === undefined) return Number.POSITIVE_INFINITY;
-  const offset = (nextRandom(seed) % 9) - 4;
-  return base + offset;
+function createBattlePlan(seed: number): BattlePlan {
+  let randomSeed = mixSeed(seed);
+  const integer = (min: number, max: number) => {
+    randomSeed = nextRandom(randomSeed);
+    return min + Math.floor(randomSeed / 0x1_0000_0000 * (max - min + 1));
+  };
+
+  const profile = WAVE_PROFILES[integer(0, WAVE_PROFILES.length - 1)]!;
+  const remaining: Record<CoreRequestKind, number> = { feature: 0, bug: 0, infra: 0 };
+  for (const kind of profile.kinds) remaining[kind] += 1;
+  const kinds: CoreRequestKind[] = [];
+  while (kinds.length < profile.kinds.length) {
+    const previous = kinds.at(-1);
+    const repeatPrevious = Boolean(previous && remaining[previous] > 0 && integer(0, 99) < 48);
+    const pool = (Object.keys(remaining) as CoreRequestKind[]).flatMap((kind) => Array(remaining[kind]).fill(kind));
+    const kind = repeatPrevious ? previous! : pool[integer(0, pool.length - 1)] as CoreRequestKind;
+    kinds.push(kind);
+    remaining[kind] -= 1;
+  }
+
+  const requests = REQUEST_SCHEDULE.map((base, index) => {
+    if (index === 0 || index === REQUEST_SCHEDULE.length - 1) return base;
+    const kind = kinds[index - 1]!;
+    const title = REQUEST_TITLES[kind][integer(0, REQUEST_TITLES[kind].length - 1)]!;
+    const urgent = profile.urgent === true && index === 5;
+    const workPercent = integer(94, 106) * (kind === "bug" ? 0.97 : kind === "infra" ? 1.04 : 1);
+    const speedPercent = integer(96, 104) * (urgent ? 1.1 : 1);
+    return {
+      ...base,
+      title: `${urgent ? "紧急：" : ""}${title}`,
+      kind,
+      totalWork: Math.round(base.totalWork * workPercent / 100 * (urgent ? 0.9 : 1)),
+      speed: Math.round(base.speed * speedPercent / 100),
+      severity: Math.min(28, base.severity + integer(-1, 1) + (urgent ? 8 : 0)),
+      budgetReward: Math.round(base.budgetReward * integer(94, 106) / 100),
+      experienceReward: Math.round(base.experienceReward * integer(94, 106) / 100)
+    };
+  });
+  const counts: Record<CoreRequestKind, number> = {
+    feature: kinds.filter((kind) => kind === "feature").length,
+    bug: kinds.filter((kind) => kind === "bug").length,
+    infra: kinds.filter((kind) => kind === "infra").length
+  };
+  const maxCount = Math.max(...Object.values(counts));
+  const dominantKinds = (Object.keys(counts) as CoreRequestKind[]).filter((kind) => counts[kind] === maxCount);
+  const bossKind = dominantKinds[integer(0, dominantKinds.length - 1)]!;
+  const bossTitles: Record<CoreRequestKind, string> = {
+    feature: "专项大需求：大促作战室",
+    bug: "专项大需求：上线前全链路回归",
+    infra: "专项大需求：核心链路扩容"
+  };
+  const boss = {
+    code: "BOSS-01",
+    title: bossTitles[bossKind],
+    kind: bossKind,
+    speed: integer(21, 24),
+    totalWork: integer(850, 960),
+    budgetReward: integer(140, 160),
+    experienceReward: integer(82, 98),
+    severity: integer(42, 49),
+    isFinal: false,
+    isBoss: true
+  } satisfies Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">;
+
+  const requestTimes = REQUEST_SPAWN_TIMES.map((time, index) => index === 0 || index === REQUEST_SPAWN_TIMES.length - 1 ? time : time + integer(-3, 3));
+  const eventTimes = EVENT_SPAWN_TIMES.map((time) => time + integer(-4, 4));
+  const events: ChangeEvent[] = [];
+  while (events.length < EVENT_SPAWN_TIMES.length) {
+    const recentIds = new Set(events.slice(-2).map((event) => event.id));
+    const eligible = CHANGE_EVENTS.filter((event) => !recentIds.has(event.id));
+    events.push(eligible[integer(0, eligible.length - 1)]!);
+  }
+  return {
+    profile: profile.id,
+    requestTimes,
+    requests,
+    bossAt: integer(145, 165),
+    boss,
+    eventTimes,
+    events,
+    randomSeed
+  };
 }
 
 export function getEngineerDefinition(id: EngineerId): EngineerDefinition {
@@ -259,6 +354,7 @@ export function getEngineerCost(state: BattleState, role: EngineerId): number {
 
 export function createBattle(seed = 1024): BattleState {
   const normalizedSeed = seed >>> 0 || 1;
+  const plan = createBattlePlan(normalizedSeed);
   return {
     phase: "running",
     elapsed: 0,
@@ -273,10 +369,11 @@ export function createBattle(seed = 1024): BattleState {
     nextEngineerId: 2,
     nextRequestId: 1,
     requestScheduleIndex: 0,
+    plan,
     bossSpawned: false,
     eventScheduleIndex: 0,
-    nextEventAt: eventTimeAt(0, normalizedSeed),
-    randomSeed: normalizedSeed,
+    nextEventAt: plan.eventTimes[0] ?? Number.POSITIVE_INFINITY,
+    randomSeed: plan.randomSeed,
     pendingEvent: null,
     tutorialStep: 0,
     rushUntil: 0,
@@ -353,7 +450,10 @@ export function chooseChange(state: BattleState, choiceId: string): boolean {
       state.budget += 45;
       state.experience += 18;
       addTechDebt(state, 24, "接下临时需求");
-      addRequirement(state, { code: "R-CHANGE", title: "临时统计卡片", kind: "feature", speed: 30, totalWork: 110, budgetReward: 40, experienceReward: 22, severity: 8, isFinal: false });
+      {
+        const acceptedChanges = state.telemetry.filter((item) => item.type === "event_choice" && item.detail.choice === "accept-scope").length;
+        addRequirement(state, { code: acceptedChanges === 0 ? "R-CHANGE" : `R-CHANGE-${String(acceptedChanges + 1).padStart(2, "0")}`, title: "临时统计卡片", kind: "feature", speed: 30, totalWork: 110, budgetReward: 40, experienceReward: 22, severity: 8, isFinal: false });
+      }
       break;
     case "freeze-scope":
       state.budget = Math.max(0, state.budget - 12);
@@ -603,26 +703,26 @@ function advanceHiring(state: BattleState, delta: number): void {
 }
 
 function spawnScheduledRequests(state: BattleState): void {
-  while (state.requestScheduleIndex < REQUEST_SPAWN_TIMES.length && REQUEST_SPAWN_TIMES[state.requestScheduleIndex] <= state.elapsed) {
-    const definition = REQUEST_SCHEDULE[state.requestScheduleIndex];
+  while (state.requestScheduleIndex < state.plan.requestTimes.length && state.plan.requestTimes[state.requestScheduleIndex]! <= state.elapsed) {
+    const definition = state.plan.requests[state.requestScheduleIndex];
     state.requestScheduleIndex += 1;
-    addRequirement(state, definition);
+    if (definition) addRequirement(state, definition);
   }
-  if (!state.bossSpawned && state.elapsed >= BOSS_SPAWN_TIME) {
+  if (!state.bossSpawned && state.elapsed >= state.plan.bossAt) {
     state.bossSpawned = true;
-    addRequirement(state, BOSS_DEFINITION);
-    setNotice(state, "专项大需求进入待办：大促作战室（工期 900 工时）");
-    emitTelemetry(state, "boss_spawn", { request: BOSS_DEFINITION.code, work: BOSS_DEFINITION.totalWork });
+    addRequirement(state, state.plan.boss);
+    setNotice(state, `${state.plan.boss.title}进入待办（工期 ${state.plan.boss.totalWork} 工时）`);
+    emitTelemetry(state, "boss_spawn", { request: state.plan.boss.code, work: state.plan.boss.totalWork });
   }
 }
 
 function triggerChangeEvent(state: BattleState): void {
-  if (state.eventScheduleIndex >= EVENT_SPAWN_TIMES.length || state.elapsed < state.nextEventAt) return;
-  state.randomSeed = nextRandom(state.randomSeed);
-  const event = CHANGE_EVENTS[state.randomSeed % CHANGE_EVENTS.length];
+  if (state.eventScheduleIndex >= state.plan.eventTimes.length || state.elapsed < state.nextEventAt) return;
+  const event = state.plan.events[state.eventScheduleIndex];
+  if (!event) return;
   state.pendingEvent = event;
   state.eventScheduleIndex += 1;
-  state.nextEventAt = eventTimeAt(state.eventScheduleIndex, state.randomSeed);
+  state.nextEventAt = state.plan.eventTimes[state.eventScheduleIndex] ?? Number.POSITIVE_INFINITY;
   emitTelemetry(state, "change_event", { event: event.id });
 }
 
@@ -900,7 +1000,18 @@ function emitTelemetry(state: BattleState, type: string, detail: GameTelemetryEv
 }
 
 function nextRandom(seed: number): number {
-  return (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+  let value = seed >>> 0 || 1;
+  value ^= value << 13;
+  value ^= value >>> 17;
+  value ^= value << 5;
+  return value >>> 0;
+}
+
+function mixSeed(seed: number): number {
+  let value = seed >>> 0;
+  value = Math.imul(value ^ (value >>> 16), 0x21f0aaad);
+  value = Math.imul(value ^ (value >>> 15), 0x735a2d97);
+  return (value ^ (value >>> 15)) >>> 0 || 1;
 }
 
 function setNotice(state: BattleState, message: string): void {

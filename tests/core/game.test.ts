@@ -470,6 +470,54 @@ test("change-event timing varies by seed but remains inside the onboarding and f
   assert.ok(new Set(eventTimes).size > 1, "different runs should not repeat the exact same event timing");
 });
 
+test("seeded battle plans vary the middle wave and boss while keeping tutorial and GO-LIVE anchors", () => {
+  const plans = Array.from({ length: 100 }, (_, seed) => createBattle(seed + 1).plan);
+  assert.deepEqual(createBattle(42).plan, createBattle(42).plan, "the same seed must reproduce its complete plan");
+  assert.ok(new Set(plans.map((plan) => plan.profile)).size >= 4, "the seed should select several wave compositions");
+  assert.ok(new Set(plans.map((plan) => plan.requests.slice(1, -1).map((request) => request.kind).join(","))).size > 20, "the request order should vary within each composition");
+  assert.ok(new Set(plans.map((plan) => plan.events.map((event) => event.id).join(","))).size > 20, "event choices should not fall into a short repeating cycle");
+  assert.ok(new Set(plans.map((plan) => plan.boss.kind)).size > 1);
+  assert.ok(new Set(plans.map((plan) => plan.bossAt)).size > 1);
+  assert.ok(new Set(plans.map((plan) => plan.requests[1]?.speed)).size > 1);
+  assert.ok(new Set(plans.map((plan) => plan.requests[1]?.severity)).size > 1);
+  assert.ok(new Set(plans.map((plan) => plan.requests[1]?.budgetReward)).size > 1);
+  assert.ok(new Set(plans.map((plan) => plan.requestTimes[1])).size > 1);
+
+  for (const plan of plans) {
+    assert.equal(plan.requests[0]?.code, "R-001");
+    assert.equal(plan.requests.at(-1)?.code, "GO-LIVE");
+    assert.equal(plan.requestTimes[0], 5);
+    assert.equal(plan.requestTimes.at(-1), 240);
+    assert.ok(plan.requestTimes.every((time, index, times) => index === 0 || time - times[index - 1]! >= 13));
+    assert.equal(new Set(plan.requests.map((request) => request.code)).size, plan.requests.length);
+    assert.ok(plan.requests.slice(1, -1).every((request) => request.totalWork >= 120 && request.totalWork <= 400 && request.speed >= 20 && request.speed <= 38));
+    assert.ok(plan.bossAt >= 145 && plan.bossAt <= 165);
+    assert.ok(plan.boss.totalWork >= 850 && plan.boss.totalWork <= 960);
+    assert.ok(plan.events.every((event, index) => index < 2 || event.id !== plan.events[index - 1]?.id && event.id !== plan.events[index - 2]?.id));
+  }
+});
+
+test("the same seed and same player inputs reproduce the battle result", () => {
+  const play = (seed: number) => {
+    const state = createBattle(seed);
+    for (let frame = 0; frame < 30 * 110 && state.phase === "running"; frame += 1) {
+      if (state.pendingEvent) chooseChange(state, state.pendingEvent.choices[0]!.id);
+      advanceBattle(state, 1 / 30);
+    }
+    return { elapsed: state.elapsed, requests: state.requests, telemetry: state.telemetry };
+  };
+  assert.deepEqual(play(0x1024), play(0x1024));
+});
+
+test("repeated scope-change acceptances keep request codes unique", () => {
+  const state = createBattle(5);
+  for (let count = 0; count < 2; count += 1) {
+    state.pendingEvent = CHANGE_EVENTS.find((event) => event.id === "scope-creep")!;
+    assert.equal(chooseChange(state, "accept-scope"), true);
+  }
+  assert.deepEqual(state.requests.map((request) => request.code), ["R-CHANGE", "R-CHANGE-02"]);
+});
+
 test("rejects an alert repair when its stated budget cost cannot be paid", () => {
   const state = createBattle();
   state.budget = 10;
@@ -731,13 +779,13 @@ test("spawns the boss request once at the mid-game beat", () => {
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
-  state.elapsed = 149.9;
+  state.elapsed = state.plan.bossAt - 0.1;
   advanceBattle(state, 0.5);
 
   const bosses = state.requests.filter((request) => request.isBoss === true);
   assert.equal(bosses.length, 1);
   assert.equal(bosses[0].code, "BOSS-01");
-  assert.equal(bosses[0].totalWork, 900);
+  assert.ok(bosses[0].totalWork >= 850 && bosses[0].totalWork <= 960);
 
   advanceBattle(state, 10);
   assert.equal(state.requests.filter((request) => request.isBoss === true).length, 1, "boss must not respawn");
@@ -766,6 +814,7 @@ test("keeps a settled engineer working through small station drift", () => {
   state.bossSpawned = true;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   const request = addRequest(state, { x: 500, speed: 0, totalWork: 10000, remainingWork: 10000 });
+  state.engineers[0].x = 460;
   tick(state, 3);
   assert.equal(state.engineers[0].action, "working");
 
