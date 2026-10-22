@@ -11,6 +11,7 @@ import {
   ERAS,
   getEngineerCost,
   getEngineerDefinition,
+  getInterpolatedWorldX,
   hireEngineer,
   MAX_PROJECT_HEALTH,
   MAX_TRAINING_QUEUE,
@@ -48,6 +49,45 @@ function safeChoice(state: BattleState): void {
   const choice = event.choices.find((item) => preference.includes(item.id)) ?? event.choices[0];
   assert.equal(chooseChange(state, choice.id), true);
 }
+
+test("interpolates fixed-step render positions without changing simulation state", () => {
+  const state = createBattle(720);
+  const engineer = state.engineers[0];
+  const request = addRequest(state, { x: 900, speed: 30, totalWork: 100, remainingWork: 100 });
+  const startEngineerX = engineer.x;
+  const startRequestX = request.x;
+
+  assert.equal(getInterpolatedWorldX(state, "engineer", engineer.id), startEngineerX);
+  assert.equal(getInterpolatedWorldX(state, "request", request.id), request.x);
+
+  advanceBattle(state, 1 / 30);
+  const simulatedEngineerX = engineer.x;
+  const simulatedRequestX = request.x;
+  assert.ok(simulatedEngineerX > startEngineerX);
+  assert.equal(getInterpolatedWorldX(state, "engineer", engineer.id), startEngineerX);
+  assert.equal(getInterpolatedWorldX(state, "request", request.id), startRequestX);
+
+  advanceBattle(state, 1 / 60);
+  const halfwayX = getInterpolatedWorldX(state, "engineer", engineer.id);
+  assert.equal(halfwayX, startEngineerX + (simulatedEngineerX - startEngineerX) * 0.5);
+  assert.equal(getInterpolatedWorldX(state, "request", request.id), startRequestX + (simulatedRequestX - startRequestX) * 0.5);
+  assert.equal(engineer.x, simulatedEngineerX, "render interpolation must not mutate the authoritative simulation position");
+});
+
+test("interpolation remains stable while paused and falls back for a fresh or missing entity", () => {
+  const state = createBattle(721);
+  const engineer = state.engineers[0];
+  addRequest(state, { x: 900, speed: 0, totalWork: 100, remainingWork: 100 });
+  advanceBattle(state, 1 / 30);
+  advanceBattle(state, 1 / 60);
+  state.paused = true;
+  const heldRenderX = getInterpolatedWorldX(state, "engineer", engineer.id);
+  advanceBattle(state, 0.1);
+  assert.equal(getInterpolatedWorldX(state, "engineer", engineer.id), heldRenderX);
+  const freshRun = createBattle(722);
+  assert.equal(getInterpolatedWorldX(freshRun, "engineer", engineer.id), freshRun.engineers[0].x);
+  assert.equal(getInterpolatedWorldX(freshRun, "engineer", 999), null);
+});
 
 function runWinningPolicy(state: BattleState): void {
   let nextHireAt = 0;

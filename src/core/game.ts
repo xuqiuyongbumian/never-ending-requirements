@@ -142,6 +142,14 @@ const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
 const DEBT_INCIDENT_THRESHOLD = 155;
 
+interface RenderPositionSnapshot {
+  engineers: Map<number, number>;
+  requests: Map<number, number>;
+}
+
+const renderPositionSnapshots = new WeakMap<BattleState, RenderPositionSnapshot>();
+const MAX_INTERPOLATION_DISTANCE = WORLD_WIDTH / 4;
+
 const REQUEST_SCHEDULE: readonly Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">[] = [
   { code: "R-001", title: "搭好开发环境", kind: "infra", speed: 20, totalWork: 95, budgetReward: 65, experienceReward: 28, severity: 7, isFinal: false },
   { code: "R-002", title: "产品首页原型", kind: "feature", speed: 22, totalWork: 135, budgetReward: 72, experienceReward: 30, severity: 8, isFinal: false },
@@ -466,7 +474,28 @@ export function advanceBattle(state: BattleState, frameDelta: number): void {
   }
 }
 
+export function getInterpolatedWorldX(
+  state: BattleState,
+  entity: "engineer" | "request",
+  id: number
+): number | null {
+  const current = entity === "engineer"
+    ? state.engineers.find((candidate) => candidate.id === id)?.x
+    : state.requests.find((candidate) => candidate.id === id)?.x;
+  if (current === undefined) return null;
+
+  const snapshot = renderPositionSnapshots.get(state);
+  const previous = entity === "engineer"
+    ? snapshot?.engineers.get(id)
+    : snapshot?.requests.get(id);
+  if (previous === undefined || Math.abs(current - previous) > MAX_INTERPOLATION_DISTANCE) return current;
+
+  const alpha = Math.max(0, Math.min(1, state.accumulator / SIMULATION_STEP));
+  return previous + (current - previous) * alpha;
+}
+
 function stepBattle(state: BattleState, delta: number): void {
+  captureRenderPositions(state);
   state.elapsed += delta;
   if (state.shipItUntil > 0 && state.elapsed >= state.shipItUntil) {
     state.shipItUntil = 0;
@@ -492,6 +521,18 @@ function stepBattle(state: BattleState, delta: number): void {
   } else if (state.projectHealth <= 0) {
     endBattle(state, "defeat", "项目健康度归零，团队无法继续交付");
   }
+}
+
+function captureRenderPositions(state: BattleState): void {
+  let snapshot = renderPositionSnapshots.get(state);
+  if (!snapshot) {
+    snapshot = { engineers: new Map(), requests: new Map() };
+    renderPositionSnapshots.set(state, snapshot);
+  }
+  snapshot.engineers.clear();
+  snapshot.requests.clear();
+  for (const engineer of state.engineers) snapshot.engineers.set(engineer.id, engineer.x);
+  for (const request of state.requests) snapshot.requests.set(request.id, request.x);
 }
 
 function advanceHiring(state: BattleState, delta: number): void {

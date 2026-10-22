@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
-  getEngineerDefinition,
+  getInterpolatedWorldX,
   prioritizeRequirement,
   WORLD_WIDTH,
   type BattleState,
@@ -9,7 +9,10 @@ import {
   type Requirement
 } from "../core/game";
 import {
-  engineerTexture,
+  ENGINEER_ANIMATIONS,
+  ENGINEER_ANIMATION_SHEETS,
+  ENGINEER_SPRITE_SHEETS,
+  engineerAnimationKey,
   GAME_ASSETS,
   GAME_TEXTURES,
   requestTexture
@@ -27,15 +30,13 @@ const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
 };
 
 interface EngineerView {
-  sprite: Phaser.GameObjects.Image;
-  shadow: Phaser.GameObjects.Graphics;
-  aura: Phaser.GameObjects.Graphics;
-  workEffect: Phaser.GameObjects.Graphics;
+  sprite: Phaser.GameObjects.Sprite;
+  shadow: Phaser.GameObjects.Ellipse;
+  aura: Phaser.GameObjects.Ellipse;
   activity: Phaser.GameObjects.Text;
-  baseScale: number;
-  motionAction: Engineer["action"];
-  motionRush: boolean;
-  motionTween: Phaser.Tweens.Tween | null;
+  motionAction: Engineer["action"] | null;
+  motionPaused: boolean;
+  motionTimeScale: number;
 }
 
 interface RequestView {
@@ -45,11 +46,15 @@ interface RequestView {
   title: Phaser.GameObjects.Text;
   code: Phaser.GameObjects.Text;
   remaining: Phaser.GameObjects.Text;
-  progress: Phaser.GameObjects.Graphics;
+  progress: Phaser.GameObjects.Rectangle;
   priorityMark: Phaser.GameObjects.Text;
   id: number;
   requestCode: string;
   accent: number;
+  textureKey: string;
+  progressWidth: number;
+  lastRemainingText: string;
+  lastPrioritized: boolean | null;
   completing: boolean;
   introPlayed: boolean;
 }
@@ -64,6 +69,9 @@ export class BattleScene extends Phaser.Scene {
   private priorityLink!: Phaser.GameObjects.Graphics;
   private engineers = new Map<number, EngineerView>();
   private requests = new Map<number, RequestView>();
+  private presentEngineerIds = new Set<number>();
+  private presentRequestIds = new Set<number>();
+  private priorityLinkActive = false;
 
   constructor() {
     super({ key: "battle", active: false });
@@ -73,12 +81,21 @@ export class BattleScene extends Phaser.Scene {
     for (const asset of GAME_TEXTURES) {
       if (!this.textures.exists(asset.key)) this.load.image(asset.key, asset.src);
     }
+    for (const sheet of ENGINEER_SPRITE_SHEETS) {
+      if (!this.textures.exists(sheet.key)) {
+        this.load.spritesheet(sheet.key, sheet.src, { frameWidth: sheet.frameWidth, frameHeight: sheet.frameHeight });
+      }
+    }
   }
 
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
     this.engineers.clear();
     this.requests.clear();
+    this.presentEngineerIds.clear();
+    this.presentRequestIds.clear();
+    this.priorityLinkActive = false;
+    this.registerEngineerAnimations();
     const era = this.state?.techEra ?? 0;
     const background = GAME_ASSETS.backgrounds[era] ?? GAME_ASSETS.backgrounds[0];
     this.background = this.add.image(WIDTH / 2, HEIGHT / 2, background.key).setDepth(0);
@@ -133,31 +150,49 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({ targets: flash, alpha: 0.24, duration: 150, yoyo: true, onComplete: () => flash.destroy() });
   }
 
+  private registerEngineerAnimations(): void {
+    for (const role of Object.keys(ENGINEER_ANIMATION_SHEETS) as Array<keyof typeof ENGINEER_ANIMATION_SHEETS>) {
+      const sheet = ENGINEER_ANIMATION_SHEETS[role];
+      for (const action of ["idle", "moving", "working"] as const) {
+        const definition = ENGINEER_ANIMATIONS[role][action];
+        const key = engineerAnimationKey(role, action);
+        if (this.anims.exists(key)) continue;
+        this.anims.create({
+          key,
+          frames: this.anims.generateFrameNumbers(sheet.key, {
+            start: definition.start,
+            end: definition.start + definition.frameCount - 1
+          }),
+          frameRate: definition.frameRate,
+          repeat: -1
+        });
+      }
+    }
+  }
+
   private syncEngineers(state: BattleState): void {
-    const present = new Set<number>();
+    const present = this.presentEngineerIds;
+    present.clear();
     for (const engineer of state.engineers) {
       present.add(engineer.id);
       let view = this.engineers.get(engineer.id);
       if (!view) {
-        const sprite = this.add.image(0, FLOOR_Y, engineerTexture(engineer.role)).setOrigin(0.5, 1).setDepth(5);
-        const maxHeight = engineer.role === "agent" ? 132 : 120;
-        const baseScale = Math.min(maxHeight / sprite.height, 138 / sprite.width);
+        const sheet = ENGINEER_ANIMATION_SHEETS[engineer.role];
+        const sprite = this.add.sprite(0, FLOOR_Y, sheet.key, 0).setOrigin(0.5, 1).setDepth(5);
+        const baseScale = Math.min(sheet.displayHeight / sheet.frameHeight, 146 / sheet.frameWidth);
         sprite.setScale(baseScale);
         view = {
           sprite,
-          shadow: this.add.graphics().setDepth(4),
-          aura: this.add.graphics().setDepth(4.5),
-          workEffect: this.add.graphics().setDepth(6),
+          shadow: this.add.ellipse(0, FLOOR_Y - 2, 52, 12, 0x1b2929, 0.25).setDepth(4),
+          aura: this.add.ellipse(0, 0, 78, 92, 0x66d9fa, 0.13).setDepth(4.5).setVisible(engineer.role === "agent"),
           activity: this.add.text(0, 0, "</>", {
             fontFamily: "ui-monospace, monospace", fontSize: "15px", fontStyle: "bold",
             color: engineer.role === "agent" ? "#8c92ff" : "#64dccf", stroke: "#20243a", strokeThickness: 4
           }).setOrigin(0.5).setDepth(6).setVisible(false),
-          baseScale,
-          motionAction: "idle",
-          motionRush: false,
-          motionTween: null
+          motionAction: null,
+          motionPaused: false,
+          motionTimeScale: -1
         };
-        this.playEngineerMotion(view, "idle", false);
         this.engineers.set(engineer.id, view);
       }
       this.updateEngineerView(view, engineer, state);
@@ -165,108 +200,65 @@ export class BattleScene extends Phaser.Scene {
     for (const [id, view] of this.engineers) {
       if (present.has(id)) continue;
       view.sprite.destroy();
-      view.motionTween?.stop();
       view.shadow.destroy();
       view.aura.destroy();
-      view.workEffect.destroy();
       view.activity.destroy();
       this.engineers.delete(id);
     }
   }
 
   private updateEngineerView(view: EngineerView, engineer: Engineer, state: BattleState): void {
-    const definition = getEngineerDefinition(engineer.role);
-    const x = engineer.x / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
-    const moving = engineer.action === "moving";
+    const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
+    const x = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
     const working = engineer.action === "working";
     const target = state.requests.find((request) => request.id === engineer.targetRequestId);
-    this.playEngineerMotion(view, moving ? "moving" : working ? "working" : "idle", state.elapsed < state.shipItUntil);
+    this.playEngineerMotion(view, engineer.role, engineer.action, state.elapsed < state.shipItUntil, state.paused, state.speed);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
-    view.sprite.setPosition(x, FLOOR_Y + hover).setFlipX(target ? target.x < engineer.x : false);
-
-    view.shadow.clear().fillStyle(0x1b2929, 0.25).fillEllipse(x, FLOOR_Y - 2, 52, 12);
-    view.aura.clear();
-    if (engineer.role === "agent") {
-      view.aura.fillStyle(0x66d9fa, 0.13).fillEllipse(x, FLOOR_Y - 48 + hover, 78, 92);
-      view.aura.fillStyle(0x9c9bff, 0.2).fillCircle(x + Math.sin(state.elapsed * 2 + engineer.id) * 25, FLOOR_Y - 85 + hover, 2.5);
-    }
-    view.activity.setVisible(working).setPosition(x + 3, FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover);
-    if (working) view.activity.setText(({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role]);
-    view.activity.setColor(engineer.role === "agent" ? "#a9a8ff" : `#${definition.color.toString(16).padStart(6, "0")}`);
-    this.drawRoleWorkEffect(view, engineer, state, x, hover);
-  }
-
-  private drawRoleWorkEffect(view: EngineerView, engineer: Engineer, state: BattleState, x: number, hover: number): void {
-    const graphics = view.workEffect;
-    graphics.clear();
-    if (engineer.action === "moving") {
-      const phase = state.elapsed * (state.elapsed < state.shipItUntil ? 15 : 10) + engineer.id;
-      const color = getEngineerDefinition(engineer.role).color;
-      graphics.fillStyle(color, 0.38).fillCircle(x - 17 + Math.sin(phase) * 3, FLOOR_Y - 7, 2.2);
-      graphics.fillStyle(color, 0.24).fillCircle(x - 27 + Math.sin(phase + 1.8) * 3, FLOOR_Y - 5, 1.6);
-      return;
-    }
-    if (engineer.action !== "working") return;
-    const y = FLOOR_Y - 100 + hover;
-    const pulse = Math.sin(state.elapsed * (state.elapsed < state.shipItUntil ? 11 : 7) + engineer.id) * 2;
-    switch (engineer.role) {
-      case "intern":
-        graphics.lineStyle(2, 0xffd27d, 0.92).strokeRect(x - 30, y - 14, 13, 20);
-        graphics.lineStyle(1, 0xfff0cc, 0.8).lineBetween(x - 27, y - 9, x - 20, y - 9).lineBetween(x - 27, y - 4, x - 23, y - 4);
-        graphics.lineStyle(2, 0x62d7a2, 0.95).lineBetween(x - 27, y + 1, x - 24, y + 4).lineBetween(x - 24, y + 4, x - 19, y - 2);
-        break;
-      case "frontend":
-        graphics.lineStyle(2, 0x65ded3, 0.9).strokeRoundedRect(x + 23, y - 22, 24, 18, 3);
-        graphics.lineStyle(1, 0x9df3e8, 0.75).lineBetween(x + 27, y - 16, x + 43, y - 16).lineBetween(x + 27, y - 11, x + 34, y - 11);
-        graphics.fillStyle(0xffcb72, 0.95).fillCircle(x + 39 + pulse, y - 8, 2.3);
-        break;
-      case "backend":
-        graphics.lineStyle(2, 0x82b4ff, 0.85).strokeRoundedRect(x - 36, y - 23, 20, 10, 2).strokeRoundedRect(x - 36, y - 9, 20, 10, 2);
-        graphics.fillStyle(0x9bd0ff, 0.95).fillCircle(x - 31, y - 18, 1.7).fillCircle(x - 31, y - 4, 1.7);
-        graphics.lineStyle(1, 0x82b4ff, 0.7).lineBetween(x - 26, y - 18, x - 19, y - 18).lineBetween(x - 26, y - 4, x - 19, y - 4);
-        break;
-      case "qa":
-        graphics.lineStyle(2, 0x7df0ae, 0.9).strokeCircle(x + 29, y - 14, 8 + pulse * 0.15);
-        graphics.lineStyle(2, 0x7df0ae, 0.9).lineBetween(x + 35, y - 8, x + 42, y - 1);
-        graphics.lineStyle(1, 0xafffd0, 0.55).strokeRect(x - 39, y - 20, 16, 22);
-        graphics.lineStyle(2, 0x7df0ae, 0.95).lineBetween(x - 36, y - 8, x - 33, y - 5).lineBetween(x - 33, y - 5, x - 28, y - 12);
-        break;
-      case "agent": {
-        const orbit = state.elapsed * (state.elapsed < state.shipItUntil ? 3.8 : 2.2) + engineer.id;
-        graphics.lineStyle(1.5, 0x80eaff, 0.55).strokeCircle(x + 33, y - 14, 15);
-        graphics.fillStyle(0x83efff, 0.95).fillCircle(x + 33 + Math.cos(orbit) * 15, y - 14 + Math.sin(orbit) * 8, 3);
-        graphics.fillStyle(0xb1a2ff, 0.9).fillCircle(x + 33 + Math.cos(orbit + 2.2) * 15, y - 14 + Math.sin(orbit + 2.2) * 8, 2.2);
-        break;
-      }
+    const targetX = target ? getInterpolatedWorldX(state, "request", target.id) ?? target.x : worldX;
+    const spriteY = FLOOR_Y + hover;
+    if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
+    const flipX = target ? targetX < worldX : false;
+    if (view.sprite.flipX !== flipX) view.sprite.setFlipX(flipX);
+    view.shadow.setPosition(x, FLOOR_Y - 2);
+    view.aura.setPosition(x, FLOOR_Y - 48 + hover);
+    if (view.activity.visible !== working) view.activity.setVisible(working);
+    if (working) {
+      const activity = ({ intern: "DOC", frontend: "UI", backend: "API", qa: "✓", agent: "AI" })[engineer.role];
+      if (view.activity.text !== activity) view.activity.setText(activity);
+      const activityX = x + 3;
+      const activityY = FLOOR_Y - (engineer.role === "agent" ? 158 : 146) + hover;
+      if (view.activity.x !== activityX || view.activity.y !== activityY) view.activity.setPosition(activityX, activityY);
     }
   }
 
-  private playEngineerMotion(view: EngineerView, action: Engineer["action"], rushing: boolean): void {
-    if (view.motionAction === action && view.motionRush === rushing && view.motionTween?.isPlaying()) return;
-    view.motionTween?.stop();
-    view.sprite.setScale(view.baseScale).setAngle(0);
-    view.motionAction = action;
-    view.motionRush = rushing;
-
-    const motion = action === "moving"
-      ? { scaleY: view.baseScale * (rushing ? 1.045 : 1.035), angle: rushing ? 2 : 1.4, duration: rushing ? 115 : 170 }
-      : action === "working"
-        ? { scaleY: view.baseScale * (rushing ? 1.03 : 1.018), angle: rushing ? -1.2 : -0.4, duration: rushing ? 250 : 390 }
-        : { scaleY: view.baseScale * 1.008, angle: 0, duration: 900 };
-
-    view.motionTween = this.tweens.add({
-      targets: view.sprite,
-      scaleY: motion.scaleY,
-      angle: motion.angle,
-      duration: motion.duration,
-      ease: "Sine.InOut",
-      yoyo: true,
-      repeat: -1
-    });
+  private playEngineerMotion(
+    view: EngineerView,
+    role: Engineer["role"],
+    action: Engineer["action"],
+    rushing: boolean,
+    paused: boolean,
+    speed: BattleState["speed"]
+  ): void {
+    if (view.motionAction !== action) {
+      view.sprite.play(engineerAnimationKey(role, action));
+      view.motionAction = action;
+      view.motionTimeScale = -1;
+    }
+    const timeScale = speed * (rushing ? 1.2 : 1);
+    if (view.motionTimeScale !== timeScale) {
+      view.sprite.anims.timeScale = timeScale;
+      view.motionTimeScale = timeScale;
+    }
+    if (view.motionPaused !== paused) {
+      if (paused) view.sprite.anims.pause();
+      else view.sprite.anims.resume();
+      view.motionPaused = paused;
+    }
   }
 
   private syncRequests(state: BattleState): void {
-    const present = new Set<number>();
+    const present = this.presentRequestIds;
+    present.clear();
     for (const request of state.requests) {
       present.add(request.id);
       let view = this.requests.get(request.id);
@@ -286,16 +278,19 @@ export class BattleScene extends Phaser.Scene {
 
   private createRequestView(request: Requirement): RequestView {
     const plate = this.add.graphics();
-    const mascot = this.add.image(-68, 0, requestTexture(request)).setOrigin(0.5);
+    const textureKey = requestTexture(request);
+    const mascot = this.add.image(-68, 0, textureKey).setOrigin(0.5);
     mascot.setScale(Math.min(68 / mascot.width, 68 / mascot.height));
     const title = this.add.text(-39, -12, request.title, { fontFamily: "sans-serif", fontSize: "12px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
     const code = this.add.text(-39, 3, request.code, { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#b4bbcc" }).setOrigin(0, 0.5);
     const remaining = this.add.text(88, 3, "", { fontFamily: "ui-monospace, monospace", fontSize: "9px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
-    const progress = this.add.graphics();
+    const progress = this.add.rectangle(-39, 16.5, 0, 5, 0x45aaa0).setOrigin(0, 0.5);
     const priorityMark = this.add.text(88, -15, "★ 优先", {
       fontFamily: "sans-serif", fontSize: "9px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3
     }).setOrigin(1, 0.5).setVisible(false);
     const container = this.add.container(0, 0, [plate, mascot, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 4 : 3);
+    const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;
+    progress.setFillStyle(accent);
     plate.setInteractive(new Phaser.Geom.Rectangle(-55, -26, 151, 49), Phaser.Geom.Rectangle.Contains);
     plate.on("pointerdown", (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
       event.stopPropagation();
@@ -304,50 +299,84 @@ export class BattleScene extends Phaser.Scene {
       const updateHud = this.game.registry.get("updateHud") as ((state: BattleState) => void) | undefined;
       updateHud?.(this.state);
     });
-    const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;
-    return { container, plate, mascot, title, code, remaining, progress, priorityMark, id: request.id, requestCode: request.code, accent, completing: false, introPlayed: false };
+    const view: RequestView = {
+      container, plate, mascot, title, code, remaining, progress, priorityMark,
+      id: request.id,
+      requestCode: request.code,
+      accent,
+      textureKey,
+      progressWidth: -1,
+      lastRemainingText: "",
+      lastPrioritized: null,
+      completing: false,
+      introPlayed: false
+    };
+    this.drawRequestPlate(view, request.isFinal, false);
+    return view;
   }
 
   private updateRequestView(view: RequestView, request: Requirement, state: BattleState): void {
-    const x = request.x / WORLD_WIDTH * WIDTH;
+    const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
+    const x = worldX / WORLD_WIDTH * WIDTH;
     const y = REQUEST_Y[request.id % REQUEST_Y.length];
-    const accent = view.accent;
     const prioritized = state.prioritizedRequestId === request.id;
-    view.container.setPosition(Math.min(WIDTH - 104, Math.max(106, x)), y)
-      .setDepth(prioritized ? 6 : request.isFinal ? 4 : 3);
+    const clampedX = Math.min(WIDTH - 104, Math.max(106, x));
+    if (view.container.x !== clampedX || view.container.y !== y) view.container.setPosition(clampedX, y);
+    const depth = prioritized ? 6 : request.isFinal ? 4 : 3;
+    if (view.container.depth !== depth) view.container.setDepth(depth);
     if (request.isFinal && !view.introPlayed) {
       view.introPlayed = true;
       view.container.setScale(0.82).setAlpha(0);
       this.tweens.add({ targets: view.container, scale: 1.16, alpha: 1, duration: 480, ease: "Back.Out" });
-    } else if (!request.isFinal) {
-      view.container.setScale(1).setAlpha(1);
     }
-    view.mascot.setTexture(requestTexture(request));
-    view.priorityMark.setVisible(prioritized);
-    view.title.setText(request.title);
-    view.code.setText(request.isFinal ? "P0 · GO-LIVE" : `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`);
-    view.remaining.setText(`${Math.ceil(request.remainingWork)} 工时`);
-    view.plate.clear();
-    if (request.isFinal) view.plate.fillStyle(0xffd27d, 0.1).fillRoundedRect(-60, -31, 161, 59, 9);
+    if (view.textureKey !== requestTexture(request)) {
+      view.textureKey = requestTexture(request);
+      view.mascot.setTexture(view.textureKey);
+    }
+    if (view.priorityMark.visible !== prioritized) view.priorityMark.setVisible(prioritized);
+    const remainingText = `${Math.ceil(request.remainingWork)} 工时`;
+    if (view.lastRemainingText !== remainingText) {
+      view.lastRemainingText = remainingText;
+      view.remaining.setText(remainingText);
+    }
+    if (view.lastPrioritized !== prioritized) {
+      view.lastPrioritized = prioritized;
+      this.drawRequestPlate(view, request.isFinal, prioritized);
+    }
+    const progressWidth = Math.max(0, Math.round(123 * (1 - request.remainingWork / request.totalWork) * 100) / 100);
+    if (view.progressWidth !== progressWidth) {
+      view.progressWidth = progressWidth;
+      view.progress.setSize(progressWidth, 5);
+    }
+  }
+
+  private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean): void {
+    const { plate, accent } = view;
+    plate.clear();
+    if (isFinal) plate.fillStyle(0xffd27d, 0.1).fillRoundedRect(-60, -31, 161, 59, 9);
     view.plate.fillStyle(0x191c31, 0.82).fillRect(-55, -22, 151, 49);
     view.plate.fillStyle(0x282b43, 0.96).fillRect(-55, -26, 151, 49);
     view.plate.fillStyle(accent).fillRect(-55, -26, 151, 4);
-    view.plate.lineStyle(prioritized || request.isFinal ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || request.isFinal ? 0.88 + Math.sin(state.elapsed * 3) * 0.1 : 0.6).strokeRect(-55, -26, 151, 49);
+    view.plate.lineStyle(prioritized || isFinal ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal ? 0.9 : 0.6).strokeRect(-55, -26, 151, 49);
     view.plate.fillStyle(0xb4bbcc, 0.25).fillRect(-39, 11, 123, 2);
-    view.progress.clear();
-    view.progress.fillStyle(0x555a73).fillRect(-39, 14, 123, 5);
-    view.progress.fillStyle(accent).fillRect(-39, 14, 123 * (1 - request.remainingWork / request.totalWork), 5);
+    view.plate.fillStyle(0x555a73).fillRect(-39, 14, 123, 5);
   }
 
   private syncPriorityLink(state: BattleState): void {
+    if (state.prioritizedRequestId === null) {
+      if (this.priorityLinkActive) this.priorityLink.clear();
+      this.priorityLinkActive = false;
+      return;
+    }
     this.priorityLink.clear();
-    if (state.prioritizedRequestId === null) return;
+    this.priorityLinkActive = true;
     const requestView = this.requests.get(state.prioritizedRequestId);
     if (!requestView) return;
     for (const engineerId of state.priorityEngineerIds) {
       const engineer = state.engineers.find((candidate) => candidate.id === engineerId && candidate.targetRequestId === state.prioritizedRequestId);
       if (!engineer) continue;
-      const engineerX = engineer.x / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
+      const worldX = getInterpolatedWorldX(state, "engineer", engineer.id) ?? engineer.x;
+      const engineerX = worldX / WORLD_WIDTH * WIDTH + (engineer.lane - 2) * 56;
       this.priorityLink.lineStyle(2, 0xffc875, engineer.action === "working" ? 0.6 : 0.34)
         .lineBetween(requestView.container.x, requestView.container.y + 26, engineerX, FLOOR_Y - 96);
       this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.container.x, requestView.container.y + 26, 3);
@@ -367,7 +396,8 @@ export class BattleScene extends Phaser.Scene {
         view.priorityMark.setVisible(false);
         view.code.setText("验收通过 · CLEAR");
         view.remaining.setText("✓ 已完成");
-        view.progress.clear().fillStyle(0x57cc91, 0.95).fillRoundedRect(-39, 14, 123, 5, 3);
+        view.progress.setFillStyle(0x57cc91, 0.95).setSize(123, 5);
+        view.progressWidth = 123;
         this.tweens.add({
           targets: view.container,
           alpha: 0,

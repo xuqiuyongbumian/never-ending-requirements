@@ -30,11 +30,62 @@ export const GAME_ASSETS = {
   }
 } as const;
 
+export type EngineerAction = "idle" | "moving" | "working";
+
+export interface EngineerAnimationDefinition {
+  start: number;
+  frameCount: number;
+  frameRate: number;
+}
+
+export const ENGINEER_ANIMATION_SHEETS = {
+  intern: { key: "engineer-anim-intern", src: asset("assets/game/animations/intern.png"), frameWidth: 256, frameHeight: 256, displayHeight: 126 },
+  frontend: { key: "engineer-anim-frontend", src: asset("assets/game/animations/frontend.png"), frameWidth: 256, frameHeight: 256, displayHeight: 126 },
+  backend: { key: "engineer-anim-backend", src: asset("assets/game/animations/backend.png"), frameWidth: 256, frameHeight: 256, displayHeight: 126 },
+  qa: { key: "engineer-anim-tester", src: asset("assets/game/animations/tester.png"), frameWidth: 256, frameHeight: 256, displayHeight: 126 },
+  agent: { key: "engineer-anim-agent", src: asset("assets/game/animations/agent.png"), frameWidth: 256, frameHeight: 256, displayHeight: 136 }
+} as const;
+
+export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
+  intern: {
+    idle: { start: 0, frameCount: 6, frameRate: 6 },
+    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    working: { start: 16, frameCount: 6, frameRate: 8 }
+  },
+  frontend: {
+    idle: { start: 0, frameCount: 4, frameRate: 6 },
+    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    working: { start: 16, frameCount: 8, frameRate: 8 }
+  },
+  backend: {
+    idle: { start: 0, frameCount: 6, frameRate: 6 },
+    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    working: { start: 16, frameCount: 6, frameRate: 8 }
+  },
+  qa: {
+    idle: { start: 0, frameCount: 4, frameRate: 6 },
+    moving: { start: 8, frameCount: 8, frameRate: 12 },
+    working: { start: 16, frameCount: 8, frameRate: 8 }
+  },
+  agent: {
+    idle: { start: 0, frameCount: 6, frameRate: 7 },
+    moving: { start: 8, frameCount: 8, frameRate: 14 },
+    working: { start: 16, frameCount: 6, frameRate: 10 }
+  }
+};
+
+export const ENGINEER_SPRITE_SHEETS = Object.values(ENGINEER_ANIMATION_SHEETS);
+
 export const GAME_TEXTURES = [
   ...Object.values(GAME_ASSETS.characters),
   ...Object.values(GAME_ASSETS.tasks),
   ...GAME_ASSETS.backgrounds
 ] as const;
+
+export function engineerAnimationKey(role: EngineerId, action: EngineerAction): string {
+  const actionName = action === "moving" ? "run" : action === "working" ? "work" : "idle";
+  return `${ENGINEER_ANIMATION_SHEETS[role].key}-${actionName}`;
+}
 
 export function engineerTexture(role: EngineerId): string {
   return GAME_ASSETS.characters[role].key;
