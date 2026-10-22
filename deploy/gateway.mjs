@@ -72,6 +72,13 @@ function serveStatic(req, res) {
     serveFile(res, filePath, extname(filePath).toLowerCase() !== ".html");
     return;
   }
+  if (extname(filePath) !== "") {
+    // 带扩展名的请求是静态资源，缺失就是缺失，绝不能回退成 index.html，
+    // 否则浏览器会把 HTML 当图片/脚本解析，且日志里看不到 404。
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("not found");
+    return;
+  }
   const indexPath = join(ROOT, "index.html");
   if (existsSync(indexPath)) {
     serveFile(res, indexPath, false);
