@@ -15,6 +15,7 @@ import {
   ENGINEER_ANIMATION_SHEETS,
   ENGINEER_SPRITE_SHEETS,
   engineerAnimationKey,
+  runContactFrameIndex,
   runAnimationFrameOffset,
   GAME_ASSETS,
   GAME_TEXTURES,
@@ -63,9 +64,10 @@ interface EngineerView {
   aura: Phaser.GameObjects.Ellipse;
   bubble: Phaser.GameObjects.Container;
   bubbleLabel: Phaser.GameObjects.Text;
-  motionAction: Engineer["action"] | null;
+  motionAction: Engineer["action"] | "landing" | null;
   motionFrameIndex: number;
   motionActionAt: number;
+  transitionUntil: number;
   motionPhaseInitialized: boolean;
   lastWorldX: number | null;
   facingLeft: boolean;
@@ -142,6 +144,8 @@ export class BattleScene extends Phaser.Scene {
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
     this.audio = (this.game.registry.get("audio") as AudioEngine | undefined) ?? null;
+    const renderScale = this.scale.width / WIDTH;
+    this.cameras.main.setZoom(renderScale).setScroll(-WIDTH * (renderScale - 1) / 2, -HEIGHT * (renderScale - 1) / 2);
     this.engineers.clear();
     this.requests.clear();
     this.presentEngineerIds.clear();
@@ -241,7 +245,7 @@ export class BattleScene extends Phaser.Scene {
         const baseScale = Math.min(sheet.displayHeight / sheet.frameHeight, 146 / sheet.frameWidth);
         sprite.setScale(baseScale);
         const bubbleLabel = this.add.text(0, 1, ACTIVITY_LABEL[engineer.role], {
-          fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#262a44", resolution: 2
+          fontFamily: "sans-serif", fontSize: "12px", fontStyle: "bold", color: "#262a44", resolution: 2
         }).setOrigin(0.5);
         const bubble = this.add
           .container(0, 0, [this.add.image(0, 0, this.ensureBubbleTexture(engineer.role)), bubbleLabel])
@@ -256,6 +260,7 @@ export class BattleScene extends Phaser.Scene {
           motionAction: null,
           motionFrameIndex: -1,
           motionActionAt: 0,
+          transitionUntil: 0,
           motionPhaseInitialized: false,
           lastWorldX: null,
           facingLeft: false,
@@ -380,6 +385,25 @@ export class BattleScene extends Phaser.Scene {
       && action !== "moving"
       && now - view.motionActionAt < MIN_ACTION_DWELL_MS;
     const effectiveAction = holdRun ? "moving" : action;
+    if (view.motionAction === "moving" && effectiveAction !== "moving") {
+      const runDefinition = ENGINEER_ANIMATIONS[role].moving;
+      const landingFrame = runContactFrameIndex(runDefinition, view.motionFrameIndex < 0 ? runDefinition.start : view.motionFrameIndex);
+      view.sprite.anims.stop();
+      view.sprite.setFrame(landingFrame);
+      view.motionAction = "landing";
+      view.motionFrameIndex = landingFrame;
+      view.transitionUntil = now + 70;
+    }
+    if (view.motionAction === "landing") {
+      if (action === "moving") {
+        view.motionAction = null;
+      } else if (paused || this.time.now < view.transitionUntil) {
+        view.motionPaused = paused;
+        return;
+      } else {
+        view.motionAction = null;
+      }
+    }
     if (view.motionAction !== effectiveAction) {
       if (effectiveAction === "moving") {
         view.sprite.anims.stop();
@@ -500,7 +524,7 @@ export class BattleScene extends Phaser.Scene {
     }).setOrigin(1, 0.5).setVisible(false);
     const badge = isBoss
       ? this.add.text(-halfWidth + 10, -cardHeight / 2 + 11, "BOSS", {
-        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff1f1",
+        fontFamily: "sans-serif", fontSize: "12px", fontStyle: "bold", color: "#fff1f1",
         backgroundColor: "#c0392b", resolution: 2
       }).setOrigin(0, 0.5).setPadding(6, 3, 6, 3)
       : undefined;

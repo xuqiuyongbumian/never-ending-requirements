@@ -118,7 +118,7 @@ test("engineers hold a capped frontline, then return to their defensive position
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
-  addRequest(state, { x: 1450, speed: 0, totalWork: 1000, remainingWork: 1000 });
+  addRequest(state, { x: 1450, speed: 15, totalWork: 1000, remainingWork: 1000 });
   tick(state, 24);
   assert.ok(state.engineers.every((engineer) => engineer.x <= 1120), "engineers must stay behind the request entry area");
   assert.ok(state.engineers.some((engineer) => engineer.x >= 900), "the team should make a short advance to the defense line");
@@ -198,7 +198,7 @@ test("unassigned engineers return to home posts while other requests remain acti
   assert.equal(held.action, "moving");
 });
 
-test("far requests use separated staging posts without sending engineers to the entrance", () => {
+test("an immobile request beyond the frontline is not assigned to engineers", () => {
   const state = createBattle();
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
@@ -210,11 +210,47 @@ test("far requests use separated staging posts without sending engineers to the 
 
   tick(state, 24);
 
-  const assigned = state.engineers.filter((engineer) => engineer.targetRequestId === request.id);
-  assert.equal(assigned.length, 5);
-  assert.equal(new Set(assigned.map((engineer) => Math.round(engineer.x))).size, assigned.length);
-  assert.ok(assigned.every((engineer) => engineer.x < 1160), "staging stays well before the request entrance");
-  assert.ok(assigned.every((engineer) => engineer.action === "idle"), "staged workers wait until the request reaches their work range");
+  assert.ok(state.engineers.every((engineer) => engineer.targetRequestId !== request.id));
+  assert.ok(state.engineers.every((engineer) => engineer.action === "idle"));
+  assert.equal(new Set(state.engineers.map((engineer) => Math.round(engineer.x))).size, state.engineers.length);
+  assert.ok(state.engineers.every((engineer) => Math.abs(engineer.x - getEngineerHomeX(engineer)) <= 3));
+  assert.equal(prioritizeRequirement(state, request.id), false, "manual priority cannot send the team to an unreachable static request");
+});
+
+test("engineers wait at home posts, then move continuously to intercept a slow far request", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  for (let id = 2; id <= 5; id += 1) {
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, runDistance: 0, targetRequestId: null, action: "idle" });
+  }
+  const request = addRequest(state, { x: 1510, speed: 20, totalWork: 10000, remainingWork: 10000, isFinal: true });
+
+  tick(state, 3.5);
+  assert.ok(state.engineers.every((engineer) => engineer.targetRequestId === request.id));
+  for (const engineer of state.engineers) {
+    if (engineer.action === "idle") assert.ok(Math.abs(engineer.x - getEngineerHomeX(engineer)) <= 3, "idle workers wait at their home post");
+  }
+
+  tick(state, 1);
+  const first = state.engineers[0];
+  assert.equal(first.action, "moving");
+  assert.ok(first.x > getEngineerHomeX(first), "the first worker departs only when it can keep moving toward the request");
+
+  for (let frame = 0; frame < 11.5 * 30 && state.phase === "running"; frame += 1) {
+    if (state.pendingEvent) chooseChange(state, state.pendingEvent.choices[0].id);
+    advanceBattle(state, 1 / 30);
+    for (const engineer of state.engineers) {
+      if (engineer.action === "idle") {
+        const waitingAtHome = Math.abs(engineer.x - getEngineerHomeX(engineer)) <= 3;
+        const holdingFrontline = engineer.x === 1120 && Math.abs(request.x - engineer.x) <= getEngineerDefinition(engineer.role).workRange + 2;
+        assert.ok(waitingAtHome || holdingFrontline, "an outbound engineer must not idle in the middle of the lane");
+      }
+    }
+  }
+  assert.ok(state.engineers.some((engineer) => engineer.action === "working"));
+  assert.ok(state.engineers.filter((engineer) => engineer.action === "working").every((engineer) => Math.abs(request.x - engineer.x) <= getEngineerDefinition(engineer.role).workRange));
 });
 
 test("collaborators add less work at each additional slot instead of multiplying linearly", () => {
@@ -485,7 +521,7 @@ test("priority scheduling assigns a suitable subset and leaves other engineers o
     { id: 3, role: "intern", lane: 2, x: 520, runDistance: 0, targetRequestId: null, action: "idle" },
     { id: 4, role: "intern", lane: 3, x: 540, runDistance: 0, targetRequestId: null, action: "idle" }
   );
-  const priority = addRequest(state, { kind: "feature", x: 1300, remainingWork: 500, totalWork: 500, speed: 0 });
+  const priority = addRequest(state, { kind: "feature", x: 1300, remainingWork: 500, totalWork: 500, speed: 20 });
   const nearby = addRequest(state, { kind: "bug", x: 720, remainingWork: 500, totalWork: 500, speed: 0 });
 
   assert.equal(prioritizeRequirement(state, priority.id), true);
@@ -523,7 +559,7 @@ test("a missed or stale priority request is cleared without blocking dispatch", 
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
-  const urgent = addRequest(state, { x: BASE_FRONT_EDGE + 1, speed: 60, severity: 1 });
+  const urgent = addRequest(state, { x: BASE_FRONT_EDGE + 1, speed: 30, severity: 1 });
   const fallback = addRequest(state, { x: 800, speed: 0, totalWork: 100, remainingWork: 100 });
   assert.equal(prioritizeRequirement(state, urgent.id), true);
   advanceBattle(state, 1 / 30);
@@ -562,7 +598,7 @@ test("prioritizing a new request reroutes only a small part of a fully occupied 
   for (let index = 1; index < 4; index += 1) {
     state.engineers.push({ id: index + 1, role: "intern", lane: index, x: 440 + index * 20, runDistance: 0, action: "working", targetRequestId: existing[index].id });
   }
-  const urgent = addRequest(state, { kind: "feature", x: 1400, speed: 0, totalWork: 1000, remainingWork: 1000 });
+  const urgent = addRequest(state, { kind: "feature", x: 1400, speed: 20, totalWork: 1000, remainingWork: 1000 });
 
   assert.equal(prioritizeRequirement(state, urgent.id), true);
   assert.equal(state.priorityEngineerIds.length, 1);
@@ -577,7 +613,7 @@ test("priority assignments stay stable and respect the dispatch cooldown", () =>
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   state.engineers[0].x = 440;
-  const priority = addRequest(state, { x: 1400, speed: 0, totalWork: 2000, remainingWork: 2000 });
+  const priority = addRequest(state, { x: 1400, speed: 20, totalWork: 2000, remainingWork: 2000 });
   const nearby = addRequest(state, { x: 700, speed: 0, totalWork: 2000, remainingWork: 2000 });
 
   assert.equal(prioritizeRequirement(state, priority.id), true);

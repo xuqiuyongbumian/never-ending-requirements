@@ -80,6 +80,14 @@ export function runAnimationFrameOffset(
   return animationFrameOffset(definition, definition.start + Math.floor(distance / (moveSpeed / definition.frameRate) + phase));
 }
 
+export function runContactFrameIndex(definition: EngineerAnimationDefinition, frameIndex: number): number {
+  const offset = animationFrameOffset(definition, frameIndex);
+  const oppositeContact = Math.floor(definition.frameCount / 2);
+  const distanceToFirst = Math.min(offset, definition.frameCount - offset);
+  const distanceToOpposite = Math.abs(offset - oppositeContact);
+  return definition.start + (distanceToFirst <= distanceToOpposite ? 0 : oppositeContact);
+}
+
 export const ENGINEER_ANIMATION_SHEETS = {
   intern: {
     key: "engineer-anim-intern",
@@ -118,7 +126,7 @@ export const ENGINEER_ANIMATION_SHEETS = {
   },
 } as const;
 
-// The 8-frame run loop uses a four-world-unit stride for a more responsive cadence.
+// One frame per four travelled world units keeps footfalls tied to movement.
 const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
   intern: 58,
   frontend: 62,

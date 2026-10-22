@@ -6,6 +6,7 @@ import { getEngineerDefinition } from "../../src/core/game.ts";
 import {
   animationFrameOffset,
   runAnimationFrameOffset,
+  runContactFrameIndex,
   GAME_ASSETS,
   ENGINEER_ANIMATIONS,
   ENGINEER_ANIMATION_SHEETS,
@@ -97,6 +98,13 @@ test("run animation advances every four traveled units and loops by distance", (
   assert.equal(runAnimationFrameOffset(definition, 4, speed), 1);
   assert.equal(runAnimationFrameOffset(definition, 31.99, speed), 7);
   assert.equal(runAnimationFrameOffset(definition, 32, speed), 0);
+});
+
+test("ending a run selects the closest alternating contact pose", () => {
+  const run = ENGINEER_ANIMATIONS.backend.moving;
+  assert.equal(runContactFrameIndex(run, run.start + 1), run.start);
+  assert.equal(runContactFrameIndex(run, run.start + 3), run.start + 4);
+  assert.equal(runContactFrameIndex(run, run.start + 7), run.start);
 });
 
 test("selects the request mascot from its live type and workload", () => {

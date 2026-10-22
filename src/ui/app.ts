@@ -59,6 +59,13 @@ export class GameApp {
     document.documentElement.style.setProperty("--studio-background", `url("${menuBackground}")`);
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
+    document.addEventListener("fullscreenchange", () => {
+      const button = this.root.querySelector<HTMLButtonElement>("#fullscreen-game");
+      if (!button) return;
+      const active = Boolean(document.fullscreenElement);
+      button.setAttribute("aria-label", active ? "退出全屏" : "进入全屏");
+      button.title = active ? "退出全屏（Esc）" : "进入全屏";
+    });
     this.telemetry.enter();
     this.showMenu();
   }
@@ -221,6 +228,7 @@ export class GameApp {
               <small class="debt-warning" data-debt-warning role="status" aria-live="polite" hidden>线上事故风险升高</small>
             </div>
             ${audioPanelMarkup(this.audio.settings)}
+            <button class="icon-button" id="fullscreen-game" aria-label="进入全屏" title="进入全屏">⛶</button>
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
         </header>
@@ -295,6 +303,7 @@ export class GameApp {
     }
     this.root.querySelector("#upgrade-era")?.addEventListener("click", () => this.advanceEra());
     this.root.querySelector("#pause-game")?.addEventListener("click", () => this.togglePause());
+    this.root.querySelector("#fullscreen-game")?.addEventListener("click", () => void this.toggleFullscreen());
     this.root.querySelector("#speed-game")?.addEventListener("click", () => this.toggleSpeed());
     this.root.querySelector("#ship-it")?.addEventListener("click", () => this.useShipIt());
     this.root.querySelector("#back-to-menu")?.addEventListener("click", () => this.showMenu());
@@ -390,6 +399,25 @@ export class GameApp {
     this.telemetry.trackInteraction("speed", { speed: this.state.speed });
     const button = this.root.querySelector<HTMLButtonElement>("#speed-game");
     if (button) button.textContent = `速度　${this.state.speed}×`;
+  }
+
+  private async toggleFullscreen(): Promise<void> {
+    const target = this.root.closest<HTMLElement>("#app");
+    const button = this.root.querySelector<HTMLButtonElement>("#fullscreen-game");
+    if (!target) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (target.requestFullscreen) await target.requestFullscreen();
+      else if (button) {
+        button.setAttribute("aria-label", "浏览器不支持全屏");
+        button.title = "浏览器不支持全屏，请使用浏览器的全屏功能";
+      }
+    } catch {
+      if (button) {
+        button.setAttribute("aria-label", "无法进入全屏");
+        button.title = "无法进入全屏，请检查浏览器权限";
+      }
+    }
   }
 
   private handleKeydown(event: KeyboardEvent): void {
