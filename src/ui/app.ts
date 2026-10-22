@@ -32,6 +32,8 @@ import { audioPanelMarkup, bindAudioPanel, syncAudioPanel } from "./audio-panel"
 import { CommunityPanel } from "./community";
 import { buildLocalAchievementWall, evaluateCurrentRun, localPersonalBest } from "./local-stats";
 import { summarizeRun, TelemetryReporter } from "./telemetry";
+import { getDeliveryProgress } from "./run-progress";
+import { getOpeningBattlePlanHint, getUpcomingBattlePlanHint } from "./battle-plan-hints";
 import { calculateRunScore } from "../../shared/scoring.ts";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
@@ -223,6 +225,7 @@ export class GameApp {
     document.querySelector<HTMLElement>("#stage")?.classList.add("is-battle-mode");
     this.root.innerHTML = `
       <section class="battle-ui" aria-label="需求永不眠项目现场">
+        <div class="orientation-guide" role="status"><div><span>1024 · GO-LIVE</span><strong>请横屏游玩</strong><small>旋转设备以查看完整战场和操作面板。</small></div></div>
         <header class="battle-header">
           <div class="header-identity">
             <button class="back-button" id="back-to-menu" aria-label="返回首页">← <span>项目列表</span></button>
@@ -230,7 +233,7 @@ export class GameApp {
           </div>
           <div class="header-goal">
             <div class="deadline-clock"><span>距离上线</span><strong data-time>05:00</strong></div>
-            <div class="goal-progress"><span data-goal-label>验收需求</span><strong data-goal-value>0 / 11</strong><i class="goal-track"><i data-goal-bar></i></i></div>
+            <div class="goal-progress"><span data-goal-label>常规验收</span><strong data-goal-value>0 / 11</strong><i class="goal-track"><i data-goal-bar></i></i><small data-boss-status></small></div>
           </div>
           <div class="header-actions">
             <div class="metric-pill budget-pill"><img class="metric-icon" src="${GAME_ASSETS.icons.budget.src}" alt="" aria-hidden="true"><strong data-budget>145</strong><small>预算</small></div>
@@ -252,7 +255,7 @@ export class GameApp {
           </div>
         </header>
 
-        <div class="tutorial-callout" data-tutorial role="status" aria-live="polite"></div>
+        <div class="tutorial-callout" role="status" aria-live="polite"><strong data-plan-hint></strong><span data-tutorial></span></div>
         <div class="battle-notice" data-notice role="status" aria-live="polite"></div>
 
         <section class="unit-deck" aria-label="招聘工程师">
@@ -307,7 +310,7 @@ export class GameApp {
           <div class="result-achievements" data-result-achievements></div>
           <div class="result-stats">
             <span>最终健康<strong data-final-health></strong></span><span>技术债<strong data-final-debt></strong></span><span>完成时代<strong data-final-era></strong></span>
-            <span>验收需求<strong data-run-requests></strong></span><span>招募工程师<strong data-run-hires></strong></span><span>应对变更<strong data-run-events></strong></span>
+            <span>常规验收<strong data-run-requests></strong></span><span>额外需求<strong data-run-extras></strong></span><span>Boss<strong data-run-boss></strong></span><span>最终上线<strong data-run-go-live></strong></span><span>招募工程师<strong data-run-hires></strong></span><span>应对变更<strong data-run-events></strong></span>
           </div>
           <div class="result-actions">
             <button class="primary-button" id="replay-battle">再开一个项目 <span>↻</span></button>
@@ -537,15 +540,26 @@ export class GameApp {
           : `${state.requests.length} 项待办需求`;
     }
     this.setText("[data-era-heading]", ERAS[state.techEra].name);
-    this.setText("[data-tutorial]", tutorialText(state));
+    const tutorial = tutorialText(state);
+    this.setText("[data-tutorial]", tutorial);
     const finalRequest = state.requests.find((request) => request.isFinal);
-    const completedRequests = state.telemetry.filter((event) => event.type === "request_complete" && event.detail.request !== "GO-LIVE").length;
-    const finalComplete = state.telemetry.some((event) => event.type === "request_complete" && event.detail.request === "GO-LIVE");
+    const delivery = getDeliveryProgress(state.telemetry, state.plan);
+    const goLiveFailed = delivery.goLiveMissed && !delivery.goLiveCompleted;
     const goalProgress = finalRequest
       ? 1 - finalRequest.remainingWork / finalRequest.totalWork
-      : finalComplete ? 1 : Math.min(completedRequests / 11, 1);
-    this.setText("[data-goal-label]", finalRequest || finalComplete ? "最终需求" : "验收需求");
-    this.setText("[data-goal-value]", finalRequest ? `GO-LIVE ${Math.round((1 - finalRequest.remainingWork / finalRequest.totalWork) * 100)}%` : finalComplete ? "GO-LIVE ✓" : `${Math.min(completedRequests, 11)} / 11`);
+      : delivery.goLiveCompleted ? 1 : goLiveFailed ? 0 : delivery.normalTotal > 0 ? Math.min(delivery.normalCompleted / delivery.normalTotal, 1) : 0;
+    this.root.querySelector(".goal-progress")?.classList.toggle("is-failed", goLiveFailed);
+    this.setText("[data-goal-label]", goLiveFailed ? "上线结果" : (finalRequest || delivery.goLiveCompleted) ? "最终上线" : "常规验收");
+    this.setText("[data-goal-value]", finalRequest
+      ? `GO-LIVE ${Math.round((1 - finalRequest.remainingWork / finalRequest.totalWork) * 100)}%`
+      : delivery.goLiveCompleted ? "GO-LIVE ✓" : goLiveFailed ? "GO-LIVE 超时" : `${delivery.normalCompleted} / ${delivery.normalTotal}`);
+    const bossActive = state.requests.some((request) => request.isBoss);
+    this.setText("[data-boss-status]", delivery.bossCompleted ? "Boss 已完成" : delivery.bossMissed ? "Boss 已漏单"
+      : bossActive ? "Boss 攻坚中" : state.bossSpawned ? "Boss 未拦截" : "Boss 未登场");
+    const planHint = state.elapsed <= 12 ? getOpeningBattlePlanHint(state.plan) : getUpcomingBattlePlanHint(state);
+    this.setText("[data-plan-hint]", planHint);
+    const tutorialCallout = this.root.querySelector<HTMLElement>(".tutorial-callout");
+    if (tutorialCallout) tutorialCallout.hidden = !tutorial && !planHint;
     this.updateBar("[data-goal-bar]", goalProgress);
     this.updateBar("[data-health-bar]", state.projectHealth / MAX_PROJECT_HEALTH);
     this.updateBar("[data-debt-bar]", state.techDebt / 200);
@@ -654,12 +668,25 @@ export class GameApp {
     result.classList.toggle("defeat", !won);
     this.setText("[data-result-stamp]", won ? "上线成功" : "项目复盘");
     this.setText("[data-result-title]", won ? "项目准时上线" : "本次未能上线");
-    this.setText("[data-result-copy]", state.notice || (won ? "最终需求在截止前完成，团队交付成功。" : "项目窗口已关闭，调整团队与技术债后再试一次。"));
+    const delivery = getDeliveryProgress(state.telemetry, state.plan);
+    const bossActive = state.requests.some((request) => request.isBoss);
+    const bossStatus = delivery.bossCompleted ? "已完成" : delivery.bossMissed ? "已漏单"
+      : bossActive ? "攻坚中" : state.bossSpawned ? "未拦截" : "未登场";
+    const reason = state.notice || (won ? "最终需求在截止前完成" : "项目窗口已关闭");
+    const recap = won
+      ? `常规验收 ${delivery.normalCompleted}/${delivery.normalTotal} 项，Boss ${bossStatus}，最终 GO-LIVE 准时完成。`
+      : delivery.goLiveCompleted
+        ? `最终 GO-LIVE 已完成，但项目未能保持上线：${reason}。Boss ${bossStatus}。`
+        : `常规验收 ${delivery.normalCompleted}/${delivery.normalTotal} 项，Boss ${bossStatus}。最终 GO-LIVE 未完成：${reason}。`;
+    this.setText("[data-result-copy]", recap);
     this.setText("[data-final-health]", `${Math.ceil(state.projectHealth)}%`);
     this.setText("[data-final-debt]", Math.floor(state.techDebt).toString());
     this.setText("[data-final-era]", ERAS[state.techEra].name);
     const summary = summarizeRun(state.telemetry);
-    this.setText("[data-run-requests]", summary.completedRequests.toString());
+    this.setText("[data-run-requests]", `${delivery.normalCompleted} / ${delivery.normalTotal}`);
+    this.setText("[data-run-extras]", delivery.extraCompleted.toString());
+    this.setText("[data-run-boss]", bossStatus);
+    this.setText("[data-run-go-live]", delivery.goLiveCompleted ? "已完成" : "未完成");
     this.setText("[data-run-hires]", summary.recruitedEngineers.toString());
     this.setText("[data-run-events]", summary.answeredChanges.toString());
     const outcome = won ? "win" : "loss";
