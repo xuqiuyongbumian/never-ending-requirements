@@ -254,6 +254,28 @@ test("engineers wait at home posts, then move continuously to intercept a slow f
   assert.ok(state.engineers.filter((engineer) => engineer.action === "working").every((engineer) => Math.abs(request.x - engineer.x) <= getEngineerDefinition(engineer.role).workRange));
 });
 
+test("deployed engineers hold their position while waiting for a distant request", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  const engineer = state.engineers[0];
+  engineer.x = 1120;
+  engineer.action = "working";
+  const request = addRequest(state, { x: 1510, speed: 20, totalWork: 10000, remainingWork: 10000, isFinal: true });
+
+  tick(state, 2);
+
+  assert.equal(engineer.targetRequestId, request.id);
+  assert.equal(engineer.x, 1120, "a deployed worker should not run home and then turn back toward the same request");
+  assert.equal(engineer.action, "idle", "wait at the forward post instead of walking backward");
+  assert.equal(engineer.runDistance, 0);
+
+  tick(state, 16);
+  assert.equal(engineer.x, 1120, "the engineer should keep the forward post until the request enters work range");
+  assert.equal(engineer.action, "working");
+});
+
 test("collaborators add less work at each additional slot instead of multiplying linearly", () => {
   const one = createBattle();
   const two = createBattle();
