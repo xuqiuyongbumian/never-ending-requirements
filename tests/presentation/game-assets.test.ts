@@ -46,12 +46,14 @@ test("maps five valid RGBA sprite sheets with distinct, correctly sized action r
     assert.ok(existsSync(path), sheet.src);
     const png = readFileSync(path);
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${role} must be a PNG`);
-    assert.equal(png.readUInt32BE(16), 2048, `${role} sheet width`);
-    assert.equal(png.readUInt32BE(20), 768, `${role} sheet height`);
+    assert.equal(png.readUInt32BE(16), 2066, `${role} padded sheet width`);
+    assert.equal(png.readUInt32BE(20), 776, `${role} padded sheet height`);
     assert.equal(png[24], 8, `${role} must use 8-bit channels`);
     assert.equal(png[25], 6, `${role} must retain RGBA alpha`);
     assert.equal(sheet.frameWidth, 256);
     assert.equal(sheet.frameHeight, 256);
+    assert.equal(sheet.margin, 2);
+    assert.equal(sheet.spacing, 2);
 
     const actions = ENGINEER_ANIMATIONS[role];
     assert.ok(actions.idle.frameCount >= 4 && actions.idle.frameCount <= 6, `${role} idle frames`);
