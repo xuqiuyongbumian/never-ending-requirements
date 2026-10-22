@@ -270,12 +270,16 @@ export class GameApp {
               <button id="speed-game" class="speed-button">速度 1×</button>
             </div>
           </div>
+          <div class="unit-row">
           <div class="unit-cards">${ENGINEER_DEFS.map((engineer, index) => `
             <button class="unit-card role-${engineer.id}" data-role="${engineer.id}" aria-label="招聘${engineer.name}，消耗${engineer.cost}预算" title="${engineer.summary}">
               <span class="unit-card-top"><span class="unit-key">0${index + 1}</span><img class="unit-portrait" src="${GAME_ASSETS.characters[engineer.id].src}" alt="" aria-hidden="true"></span>
               <strong>${engineer.name}</strong>
               <span class="unit-card-bottom"><small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small><b><span aria-hidden="true">◈</span> <span data-role-cost>${engineer.cost}</span></b></span>
             </button>`).join("")}
+          </div>
+          <div class="deck-actions" role="group" aria-label="战术行动">
+            <span class="deck-actions-label">战术</span>
             <button id="ship-it" class="unit-card action-card action-ship" aria-label="极限冲刺：持续 12 秒，效率提升 40%，技术债增加 25，冷却 45 秒" title="持续 12 秒，效率 +40%，技术债 +25，冷却 45 秒">
               <span class="unit-card-top"><span class="unit-key action-key">R</span><span class="action-glyph" aria-hidden="true">✦</span></span>
               <strong data-ship-it-label>极限冲刺</strong>
@@ -286,6 +290,7 @@ export class GameApp {
               <strong data-era-button>升级时代</strong>
               <span class="unit-card-bottom"><small class="role-state" data-era-cost>需要 80 经验</small><b class="action-tag">进化</b></span>
             </button>
+          </div>
           </div>
           <div class="deck-footer">
             <span class="hint-copy">点需求卡优先调度 · R 冲刺 · 1–5 招聘</span>
@@ -597,8 +602,8 @@ export class GameApp {
     const nextEra = getNextEra(state);
     const eraButton = this.root.querySelector<HTMLButtonElement>("#upgrade-era");
     if (eraButton) eraButton.disabled = !nextEra || state.experience < nextEra.cost || state.phase !== "running";
-    this.setText("[data-era-button]", nextEra ? `升级：${nextEra.name}` : "已到达 Agent 时代");
-    this.setText("[data-era-cost]", nextEra ? `需要 ${nextEra.cost} 经验 · 效率提升` : "所有角色已解锁");
+    this.setText("[data-era-button]", nextEra ? `升级${nextEra.name}` : "已到 Agent 时代");
+    this.setText("[data-era-cost]", nextEra ? `需 ${nextEra.cost} 经验` : "全部解锁");
 
     const shipItButton = this.root.querySelector<HTMLButtonElement>("#ship-it");
     if (shipItButton) {
@@ -610,8 +615,8 @@ export class GameApp {
       shipItButton.classList.toggle("is-rushing", isActive);
       shipItButton.classList.toggle("is-cooling", isCooling);
       this.setText("[data-ship-it-state]", isActive
-        ? `冲刺中 · ${Math.ceil(activeFor)} 秒`
-        : isCooling ? `冷却 · ${Math.ceil(cooldownFor)} 秒` : `+${Math.round(SHIP_IT_WORK_BONUS * 100)}% · 技术债 +${SHIP_IT_DEBT_COST}`);
+        ? `${Math.ceil(activeFor)} 秒后结束`
+        : isCooling ? `冷却 ${Math.ceil(cooldownFor)} 秒` : `+${Math.round(SHIP_IT_WORK_BONUS * 100)}% · 债+${SHIP_IT_DEBT_COST}`);
       this.setText("[data-ship-it-label]", isActive ? "Ship It!" : "极限冲刺");
       shipItButton.title = isActive
         ? `效率提升持续 ${Math.ceil(activeFor)} 秒；冷却共 ${SHIP_IT_COOLDOWN} 秒`
