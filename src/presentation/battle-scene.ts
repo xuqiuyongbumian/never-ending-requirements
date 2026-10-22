@@ -31,8 +31,8 @@ const REQUEST_CARD_WIDTH = 224;
 const REQUEST_CARD_HEIGHT = 72;
 const BOSS_CARD_WIDTH = 300;
 const BOSS_CARD_HEIGHT = 94;
-const REQUEST_CARD_ROW_GAP = 76;
-const REQUEST_CARD_BASE_OFFSET = 140;
+const REQUEST_CARD_ROW_GAP = 68;
+const REQUEST_CARD_BASE_OFFSET = 230;
 const REQUEST_MASCOT_LIFT = 28;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
@@ -52,7 +52,7 @@ const ACTIVITY_LABEL: Record<Engineer["role"], string> = {
 const BUBBLE_WIDTH = 96;
 const BUBBLE_HEIGHT = 52;
 /** Distance from the bubble centre down to the tail tip. */
-const BUBBLE_TAIL_DROP = 24;
+const BUBBLE_TAIL_DROP = 12;
 const BUBBLE_HEAD_GAP = 6;
 const FACING_DEAD_ZONE = 8;
 const MIN_ACTION_DWELL_MS = 120;
@@ -245,7 +245,7 @@ export class BattleScene extends Phaser.Scene {
         }).setOrigin(0.5);
         const bubble = this.add
           .container(0, 0, [this.add.image(0, 0, this.ensureBubbleTexture(engineer.role)), bubbleLabel])
-          .setDepth(7)
+          .setDepth(4.6)
           .setVisible(false);
         view = {
           sprite,
@@ -319,16 +319,20 @@ export class BattleScene extends Phaser.Scene {
     if (view.sprite.flipX !== view.facingLeft) view.sprite.setFlipX(view.facingLeft);
     view.shadow.setPosition(renderX, FLOOR_Y + formation.y - 2);
     view.aura.setPosition(renderX, FLOOR_Y + formation.y - 48 + hover);
-    if (view.bubble.visible !== working) {
+    // Bubbles are noisy when every engineer talks at once: only the team member
+    // the player explicitly prioritised, or someone fighting the boss, speaks.
+    const speaking = working && (target?.isBoss === true
+      || (state.prioritizedRequestId !== null && engineer.targetRequestId === state.prioritizedRequestId));
+    if (view.bubble.visible !== speaking) {
       this.tweens.killTweensOf(view.bubble);
-      if (working) {
+      if (speaking) {
         view.bubble.setVisible(true).setScale(0.72);
         this.tweens.add({ targets: view.bubble, scale: 1, duration: 220, ease: "Back.Out" });
       } else {
         view.bubble.setVisible(false);
       }
     }
-    if (working) {
+    if (speaking) {
       const label = ACTIVITY_LABEL[engineer.role];
       if (view.bubbleLabel.text !== label) view.bubbleLabel.setText(label);
       const float = Math.sin(state.elapsed * 4 + engineer.id) * 1.5;
