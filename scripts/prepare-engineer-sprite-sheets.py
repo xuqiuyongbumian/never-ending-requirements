@@ -6,24 +6,22 @@ Requires Pillow. This is an authoring script; normal npm build does not need it.
 
 from __future__ import annotations
 
-from io import BytesIO
 from collections import deque
 from pathlib import Path
-import zipfile
 
 from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUT_ZIP = ROOT / "assets-inbox/needs_no_sleep_asset_bundle_v3.zip"
 GENERATED = ROOT / "assets-inbox/generated-character-art/animation-sheets/source"
+SUPPLIED_SHEETS = {
+    "intern": GENERATED / "supplied-intern-sheet.png",
+    "backend": GENERATED / "supplied-backend-sheet.png",
+    "agent": GENERATED / "supplied-agent-sheet.png",
+}
 OUTPUT = ROOT / "public/assets/game/animations"
 FRAME = 256
 COLUMNS = 8
-
-
-def read_zip_image(archive: zipfile.ZipFile, member: str) -> Image.Image:
-    return Image.open(BytesIO(archive.read(member))).convert("RGBA")
 
 
 def cell(image: Image.Image, column: int, row: int, columns: int, rows: int) -> Image.Image:
@@ -126,12 +124,10 @@ def assert_frames(name: str, sheet: Image.Image, counts: tuple[int, int, int]) -
 
 def build() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(INPUT_ZIP) as archive:
-        supplied = {
-            "intern": read_zip_image(archive, "needs_no_sleep_asset_bundle_v3/02_character_sheets/01_intern_current_sprite_sheet.png"),
-            "backend": read_zip_image(archive, "needs_no_sleep_asset_bundle_v3/02_character_sheets/03_backend_current_sprite_sheet.png"),
-            "agent": read_zip_image(archive, "needs_no_sleep_asset_bundle_v3/02_character_sheets/05_ai_agent_current_sprite_sheet.png"),
-        }
+    supplied = {
+        role: Image.open(path).convert("RGBA")
+        for role, path in SUPPLIED_SHEETS.items()
+    }
 
     for role, source in supplied.items():
         if source.size != (COLUMNS * FRAME, 3 * FRAME):

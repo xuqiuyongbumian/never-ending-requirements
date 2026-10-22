@@ -1,11 +1,11 @@
 # 游戏素材记录
 
-运行时素材位于 `public/assets/game/`，由 `src/presentation/game-assets.ts` 映射给 Phaser 和 DOM HUD。初版素材包 `game_assets_pack.zip` 已从仓库移除；处理后的运行资源仍保留。新版素材包 `assets-inbox/needs_no_sleep_asset_bundle_v3.zip` 仍保留，因为精灵表脚本会从中读取实习生、后端和 Agent 的动作表。
+运行时素材位于 `public/assets/game/`，由 `src/presentation/game-assets.ts` 映射给 Phaser 和 DOM HUD。初版和新版完整素材 ZIP 均已从仓库历史移除；处理后的运行资源和重建动作表所需的源文件仍保留。
 
 | 内容 | 运行时资源 | 来源 |
 | --- | --- | --- |
 | 五类工程师立绘 | `characters/{intern,frontend,backend,tester,ai-agent}.webp` | intern、frontend、tester 使用项目修订稿；backend 和 agent 使用初版素材 |
-| 工程师动作表 | `animations/{intern,frontend,backend,tester,agent}.png` | intern、backend、agent 来自 v3 角色表；frontend、tester 来自 `generated-character-art/animation-sheets/source/` 中的候选稿 |
+| 工程师动作表 | `animations/{intern,frontend,backend,tester,agent}.png` | intern、backend、agent 使用 `animation-sheets/source/supplied-*-sheet.png`；frontend、tester 使用同目录中的候选稿 |
 | UI、API、功能需求图 | `tasks/{ui-task,api-task,feature-task}.webp` | v3 `04_tasks_ui_misc/01_task_characters_sheet.png` 裁切 |
 | Bug 需求图 | `tasks/bug-task.webp` | 初版独立素材处理稿；初版压缩包未保留在仓库 |
 | 三个时代背景 | `backgrounds/*.webp` | v3 `03_backgrounds/` 场景图 |
