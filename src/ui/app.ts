@@ -4,12 +4,14 @@ import {
   BASE_FRONT_EDGE,
   chooseChange,
   createBattle,
+  DEBT_INTEREST_PER_DEBT_PER_SECOND,
   ENGINEER_DEFS,
   ERAS,
   getEngineerCost,
   getEngineerDefinition,
   getNextEra,
   hireEngineer,
+  isAgentBanned,
   MAX_POPULATION,
   MAX_PROJECT_HEALTH,
   MAX_TRAINING_QUEUE,
@@ -79,7 +81,7 @@ export class GameApp {
       .filter((achievement) => achievement.unlocked)
       .sort((a, b) => b.points - a.points);
     const showcased = unlockedAchievements.length > 0
-      ? unlockedAchievements.slice(0, 6)
+      ? unlockedAchievements.slice(0, 8)
       : achievementWall.achievements.slice().sort((a, b) => b.progress - a.progress).slice(0, 3);
     const achievementCards = showcased.map((achievement) => `
               <article class="menu-achievement tier-${achievement.tier} ${achievement.unlocked ? "is-unlocked" : "is-locked"}">
@@ -95,50 +97,56 @@ export class GameApp {
       <section class="menu-screen">
         <div class="menu-grid" aria-hidden="true"></div>
         <div class="menu-content">
-          <div class="eyebrow"><span class="live-dot"></span>1024 AI 游戏创作赛 · 5 分钟限时关卡</div>
-          <h1>需求永不眠</h1>
-          <p class="menu-subtitle">组建研发团队，处理不断涌来的需求，在最后期限前让项目上线。</p>
-          <article class="mission-card">
-            <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
-            <h2>需求永不眠：1024 极限上线</h2>
-            <p>需求会从右侧逼近，处理时也不会停下。专长角色处理更快，同岗位重复招聘成本会上升。点击任务卡调度，按 R 冲刺 12 秒（效率 +40%，技术债 +25）。</p>
-            <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
-            <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
-          </article>
-          <section class="menu-achievements" aria-label="成就陈列">
-            <header class="menu-achievements-head">
-              <div class="menu-achievements-title">
-                <span class="menu-achievements-kicker">ACHIEVEMENTS</span>
-                <strong>成就陈列</strong>
+          <div class="menu-layout">
+            <div class="menu-column-main">
+              <div class="eyebrow"><span class="live-dot"></span>1024 AI 游戏创作赛 · 5 分钟限时关卡</div>
+              <h1>需求永不眠</h1>
+              <p class="menu-subtitle">组建研发团队，处理不断涌来的需求，在最后期限前让项目上线。</p>
+              <article class="mission-card">
+                <div class="mission-topline"><span>极限上线挑战</span><span class="mission-tag">版本 10.24</span></div>
+                <h2>需求永不眠：1024 极限上线</h2>
+                <p>需求会从右侧逼近，处理时也不会停下。专长角色处理更快，同岗位重复招聘成本会上升。点击任务卡调度，按 R 冲刺 12 秒（效率 +40%，技术债 +25）。</p>
+                <div class="mission-objective"><span class="objective-mark">✓</span>招人 · 进化 · 处理变更 · 准时上线</div>
+                <button class="primary-button" id="start-battle"><span>开始新项目</span><span class="button-arrow">↗</span></button>
+              </article>
+              <div class="era-preview">
+                <div><span class="era-step">01</span><strong>手搓时代</strong><small>实习生 · 前端</small></div>
+                <span class="era-arrow">→</span>
+                <div><span class="era-step">02</span><strong>工程化时代</strong><small>后端 · 测试</small></div>
+                <span class="era-arrow">→</span>
+                <div><span class="era-step">03</span><strong>Agent 时代</strong><small>AI Agent · 技术债</small></div>
               </div>
-              <div class="menu-achievements-stats">
-                <span><b>${achievementWall.unlockedCount}</b><small>/${achievementWall.achievements.length} 已解锁</small></span>
-                <span><b>${achievementWall.totalPoints}</b><small>成就点数</small></span>
-                <button class="menu-ghost-button" id="open-achievements-wall" type="button">完整成就墙 ↗</button>
+              <div class="menu-community">
+                <label class="nickname-field" for="nickname-input">
+                  <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
+                  <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
+                </label>
+                <div class="menu-community-actions">
+                  <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
+                  <button class="menu-ghost-button" id="open-achievements" type="button">成就墙 ↗</button>
+                  <span class="menu-best">本机最佳 <b>${personalBest ? personalBest.score : "—"}</b></span>
+                </div>
               </div>
-            </header>
-            <div class="menu-achievement-grid">${achievementCards}</div>
-            ${achievementWall.runs === 0 ? `<p class="menu-achievements-empty">还没有结算记录，完成第一局即可点亮成就。</p>` : ""}
-          </section>
-          <div class="era-preview">
-            <div><span class="era-step">01</span><strong>手搓时代</strong><small>实习生 · 前端</small></div>
-            <span class="era-arrow">→</span>
-            <div><span class="era-step">02</span><strong>工程化时代</strong><small>后端 · 测试</small></div>
-            <span class="era-arrow">→</span>
-            <div><span class="era-step">03</span><strong>Agent 时代</strong><small>AI Agent · 技术债</small></div>
-          </div>
-          <div class="menu-community">
-            <label class="nickname-field" for="nickname-input">
-              <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
-              <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
-            </label>
-            <div class="menu-community-actions">
-              <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
-              <button class="menu-ghost-button" id="open-achievements" type="button">成就墙 ↗</button>
-              <span class="menu-best">本机最佳 <b>${personalBest ? personalBest.score : "—"}</b></span>
+              <div class="menu-footnote"><span>PHASER 4</span><span>·</span><span>单机策略 · 浏览器即开即玩</span></div>
             </div>
+            <aside class="menu-column-side">
+              <section class="menu-achievements" aria-label="成就陈列">
+                <header class="menu-achievements-head">
+                  <div class="menu-achievements-title">
+                    <span class="menu-achievements-kicker">ACHIEVEMENTS</span>
+                    <strong>成就陈列</strong>
+                  </div>
+                  <div class="menu-achievements-stats">
+                    <span><b>${achievementWall.unlockedCount}</b><small>/${achievementWall.achievements.length} 已解锁</small></span>
+                    <span><b>${achievementWall.totalPoints}</b><small>成就点数</small></span>
+                  </div>
+                </header>
+                <div class="menu-achievement-grid">${achievementCards}</div>
+                ${achievementWall.runs === 0 ? `<p class="menu-achievements-empty">还没有结算记录，完成第一局即可点亮成就。</p>` : ""}
+                <button class="menu-ghost-button" id="open-achievements-wall" type="button">完整成就墙 ↗</button>
+              </section>
+            </aside>
           </div>
-          <div class="menu-footnote"><span>PHASER 4</span><span>·</span><span>单机策略 · 浏览器即开即玩</span></div>
         </div>
       </section>`;
     this.root.querySelector<HTMLButtonElement>("#start-battle")?.addEventListener("click", () => this.startBattle());
@@ -218,7 +226,9 @@ export class GameApp {
             <div class="project-status right-status">
               <div class="status-copy"><span><img class="status-icon" src="${GAME_ASSETS.icons.techDebt.src}" alt="" aria-hidden="true">技术债</span><strong data-debt-label>0</strong></div>
               <span class="status-track debt-track"><i data-debt-bar></i></span>
+              <small class="debt-interest" data-debt-hint role="status" aria-live="polite" hidden></small>
               <small class="debt-warning" data-debt-warning role="status" aria-live="polite" hidden>线上事故风险升高</small>
+              <small class="ai-ban-banner" data-ai-ban role="status" aria-live="polite" hidden></small>
             </div>
             ${audioPanelMarkup(this.audio.settings)}
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
@@ -435,6 +445,21 @@ export class GameApp {
     this.setResourceText("[data-exp]", Math.floor(state.experience).toString());
     this.setResourceText("[data-health-label]", `${Math.ceil(state.projectHealth)}%`);
     this.setResourceText("[data-debt-label]", Math.floor(state.techDebt).toString());
+    const interestPerMinute = Math.round(state.techDebt * DEBT_INTEREST_PER_DEBT_PER_SECOND * 60);
+    const debtHint = this.root.querySelector<HTMLElement>("[data-debt-hint]");
+    if (debtHint) {
+      debtHint.textContent = interestPerMinute > 0 ? `利息 -${interestPerMinute}/分` : "";
+      debtHint.hidden = interestPerMinute <= 0;
+    }
+    const banBanner = this.root.querySelector<HTMLElement>("[data-ai-ban]");
+    if (banBanner) {
+      if (isAgentBanned(state)) {
+        banBanner.hidden = false;
+        banBanner.textContent = `AI 已被风控封禁 ${Math.max(0, state.aiBanUntil - state.elapsed).toFixed(1)}s`;
+      } else {
+        banBanner.hidden = true;
+      }
+    }
     this.setText("[data-team]", `${state.engineers.length + state.queue.length} / ${MAX_POPULATION}`);
     const priorityRequest = state.requests.find((request) => request.id === state.prioritizedRequestId);
     const urgentRequest = [...state.requests].sort((a, b) => {

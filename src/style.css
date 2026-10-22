@@ -27,7 +27,11 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
 .menu-grid { position: absolute; inset: 0; overflow: hidden; background-image: linear-gradient(rgb(134 157 202 / 5%) 1px, transparent 1px), linear-gradient(90deg, rgb(134 157 202 / 5%) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(90deg, #000 0%, #000 36%, transparent 78%); pointer-events: none; }
 .menu-grid::before { position: absolute; right: 5%; bottom: 10%; width: min(38vw, 480px); height: 210px; border-top: 3px solid rgb(255 189 115 / 45%); border-bottom: 10px solid rgb(49 49 76 / 90%); background: repeating-linear-gradient(90deg, rgb(255 189 115 / 18%) 0 52px, rgb(100 220 207 / 12%) 52px 68px); box-shadow: 0 -54px 0 -34px rgb(43 47 75 / 80%), 0 -96px 0 -76px rgb(33 39 64 / 88%); content: ""; opacity: .72; }
 .menu-grid::after { position: absolute; right: 19%; bottom: 26%; width: 118px; height: 105px; border: 3px solid rgb(100 220 207 / 42%); border-radius: 12px; background: linear-gradient(180deg, rgb(100 220 207 / 24%) 0 43%, rgb(49 51 79 / 94%) 43%); box-shadow: 172px 56px 0 -18px rgb(39 43 68 / 86%), -132px 87px 0 -29px rgb(49 50 78 / 90%); content: ""; opacity: .68; }
-.menu-content { position: relative; z-index: 1; width: min(100%, 590px); padding: 18px 0; }
+.menu-content { position: relative; z-index: 1; width: min(100%, 1000px); padding: 18px 0; }
+.menu-layout { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 24px; align-items: start; }
+.menu-column-side { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 28px; }
+.menu-column-side .menu-achievement-grid { grid-template-columns: 1fr; }
+.menu-column-side .menu-ghost-button { align-self: flex-end; }
 .eyebrow, .mission-topline, .menu-footnote { display: flex; align-items: center; }
 .eyebrow { gap: 10px; color: var(--accent-cyan); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-gold); box-shadow: 0 0 14px rgb(255 189 115 / 55%); }
@@ -193,6 +197,9 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
 .is-deadline .battle-ui .deadline-clock strong { color: var(--accent-red); text-shadow: 0 0 15px rgb(255 107 131 / 30%); }
 
 @media (max-width: 1200px) {
+  .menu-layout { grid-template-columns: 1fr; }
+  .menu-column-side { position: static; order: 2; }
+  .menu-column-side .menu-achievement-grid { grid-template-columns: repeat(auto-fit, minmax(184px, 1fr)); }
   .battle-header { grid-template-columns: minmax(190px, .8fr) minmax(255px, .9fr) minmax(450px, 1.7fr); gap: 8px; padding-inline: 10px; }
   .header-actions { gap: 5px; }
   .metric-pill { min-width: 62px; padding-inline: 5px; }
