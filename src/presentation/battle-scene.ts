@@ -243,12 +243,17 @@ export class BattleScene extends Phaser.Scene {
         const definition = ENGINEER_ANIMATIONS[role][action];
         const key = engineerAnimationKey(role, action);
         if (this.anims.exists(key)) continue;
+        const frames = this.anims.generateFrameNumbers(sheet.key, {
+          start: definition.start,
+          end: definition.start + definition.frameCount - 1
+        });
+        // A stale sprite sheet on a CDN can expose fewer frames than the
+        // definition expects. Creating a zero-frame animation makes Phaser
+        // throw inside getFirstTick, so skip it and fall back to a still frame.
+        if (frames.length === 0) continue;
         this.anims.create({
           key,
-          frames: this.anims.generateFrameNumbers(sheet.key, {
-            start: definition.start,
-            end: definition.start + definition.frameCount - 1
-          }),
+          frames,
           frameRate: definition.frameRate,
           repeat: -1
         });
@@ -431,9 +436,19 @@ export class BattleScene extends Phaser.Scene {
       if (effectiveAction === "moving") {
         view.sprite.anims.stop();
       } else {
-        view.sprite.play(engineerAnimationKey(role, effectiveAction));
-        if (!view.motionPhaseInitialized) {
-          view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
+        const animationKey = engineerAnimationKey(role, effectiveAction);
+        const animation = this.anims.exists(animationKey) ? this.anims.get(animationKey) : undefined;
+        if (animation && animation.frames.length > 0) {
+          view.sprite.play(animationKey);
+          if (!view.motionPhaseInitialized) {
+            view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
+          }
+        } else {
+          // Missing animation (old asset bundle): hold a still frame instead of
+          // letting play() crash the whole scene.
+          const fallback = ENGINEER_ANIMATIONS[role][effectiveAction === "working" ? "working" : "idle"];
+          view.sprite.anims.stop();
+          view.sprite.setFrame(fallback.start);
         }
       }
       view.motionPhaseInitialized = true;
