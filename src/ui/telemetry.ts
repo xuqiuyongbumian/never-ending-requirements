@@ -36,7 +36,6 @@ interface RunReport extends RunSummary {
   startedAt: string;
   endedAt: string;
   gameVersion: string;
-  nickname?: string;
 }
 
 interface PendingItem<T> {
@@ -57,7 +56,7 @@ export interface TelemetryOptions {
 
 /**
  * 生产构建默认上报到同源：网关会把 /api/* 反代到后端。
- * 未配置 VITE_API_BASE_URL 时此前会完全不上报，导致线上埋点静默失效。
+ * 历史上未配置 VITE_API_BASE_URL 等价于「完全不上报」，导致线上埋点静默失效且无任何报错。
  * 开发环境保持静默，避免本地调试污染线上数据。
  */
 function defaultApiBaseUrl(): string {
@@ -67,12 +66,11 @@ function defaultApiBaseUrl(): string {
 }
 
 export class TelemetryReporter {
-  readonly sessionId = makeId();
+  private readonly sessionId = makeId();
   private runId: string | null = null;
   private runStartedAt: string | null = null;
-  private nickname: string | null = null;
   private readonly legacyEndpoint: string;
-  readonly apiBaseUrl: string;
+  private readonly apiBaseUrl: string;
   private readonly gameVersion: string;
   private readonly now: () => number;
   private readonly fetcher?: typeof fetch;
@@ -106,46 +104,10 @@ export class TelemetryReporter {
     this.track("enter", { page: location.pathname });
   }
 
-  setNickname(value: string | null | undefined): void {
-    const trimmed = (value ?? "").trim().replace(/\s+/g, " ");
-    this.nickname = trimmed.length > 0 ? trimmed.slice(0, 24) : null;
-  }
-
-  getNickname(): string | null {
-    return this.nickname;
-  }
-
-  getRunId(): string | null {
-    return this.runId;
-  }
-
-  getRunStartedAt(): string | null {
-    return this.runStartedAt;
-  }
-
   beginRun(): void {
     this.runId = makeId();
     this.runStartedAt = new Date(this.now()).toISOString();
-    this.track("game_start", this.nickname ? { nickname: this.nickname } : {});
-  }
-
-  trackInteraction(action: string, properties: Record<string, string | number | boolean> = {}): void {
-    this.track("ui_action", { action, ...properties });
-  }
-
-  abandonRun(summary: {
-    elapsed: number;
-    completedRequests: number;
-    recruitCount: number;
-    missedRequests: number;
-    finalEra: number;
-    finalTechDebt: number;
-    finalProjectHealth: number;
-  }): void {
-    if (!this.runId) return;
-    this.track("run_abandoned", this.nickname ? { ...summary, nickname: this.nickname } : { ...summary }, summary.elapsed);
-    this.runId = null;
-    this.runStartedAt = null;
+    this.track("game_start", {});
   }
 
   consume(events: readonly GameTelemetryEvent[]): void {
@@ -189,8 +151,7 @@ export class TelemetryReporter {
       sessionId: this.sessionId,
       startedAt: this.runStartedAt ?? endedAt,
       endedAt,
-      gameVersion: this.gameVersion,
-      ...(this.nickname ? { nickname: this.nickname } : {})
+      gameVersion: this.gameVersion
     };
     this.persistRun(report);
     if (this.apiBaseUrl) {

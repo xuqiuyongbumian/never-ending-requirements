@@ -140,7 +140,19 @@ const WORKING_REQUEST_SPEED_MULTIPLIER = 0.55;
 const GOLD_PER_SECOND = 1.5;
 const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
+const MAX_FRONTLINE_X = 1120;
+const DEFENSE_HOME_MARGIN = 22;
+const MOVE_ARRIVAL_EPSILON = 3;
+const HOME_STATION_START_X = BASE_FRONT_EDGE + 54;
+const HOME_STATION_SPACING = 64;
+const HOME_STATION_COLUMNS = 8;
+const FRONTLINE_STAGING_START_X = 920;
+const FRONTLINE_STAGING_SPACING = 24;
+const WORK_STATION_OFFSETS = [-64, 64, -38, 38, 0] as const;
+const WORK_STATION_SEPARATION = 52;
+const TARGET_RETENTION_RATIO = 0.72;
 const DEBT_INCIDENT_THRESHOLD = 155;
+const COLLABORATION_RETURNS = [1, 0.66, 0.44, 0.3, 0.2, 0.14] as const;
 
 interface RenderPositionSnapshot {
   engineers: Map<number, number>;
@@ -151,7 +163,7 @@ const renderPositionSnapshots = new WeakMap<BattleState, RenderPositionSnapshot>
 const MAX_INTERPOLATION_DISTANCE = WORLD_WIDTH / 4;
 
 const REQUEST_SCHEDULE: readonly Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">[] = [
-  { code: "R-001", title: "搭好开发环境", kind: "infra", speed: 20, totalWork: 95, budgetReward: 65, experienceReward: 28, severity: 7, isFinal: false },
+  { code: "R-001", title: "搭好开发环境", kind: "infra", speed: 20, totalWork: 44, budgetReward: 65, experienceReward: 28, severity: 7, isFinal: false },
   { code: "R-002", title: "产品首页原型", kind: "feature", speed: 22, totalWork: 135, budgetReward: 72, experienceReward: 30, severity: 8, isFinal: false },
   { code: "R-003", title: "修复登录回归", kind: "bug", speed: 24, totalWork: 145, budgetReward: 78, experienceReward: 34, severity: 10, isFinal: false },
   { code: "R-004", title: "消息中心改版", kind: "feature", speed: 25, totalWork: 175, budgetReward: 84, experienceReward: 36, severity: 9, isFinal: false },
@@ -160,11 +172,11 @@ const REQUEST_SCHEDULE: readonly Omit<Requirement, "id" | "x" | "remainingWork" 
   { code: "R-007", title: "AI 摘要助手", kind: "feature", speed: 28, totalWork: 230, budgetReward: 105, experienceReward: 46, severity: 12, isFinal: false },
   { code: "R-008", title: "支付边界校验", kind: "bug", speed: 29, totalWork: 245, budgetReward: 112, experienceReward: 48, severity: 13, isFinal: false },
   { code: "R-009", title: "上线数据看板", kind: "feature", speed: 30, totalWork: 265, budgetReward: 120, experienceReward: 52, severity: 14, isFinal: false },
-  { code: "R-010", title: "压测核心链路", kind: "infra", speed: 31, totalWork: 290, budgetReward: 128, experienceReward: 56, severity: 15, isFinal: false },
-  { code: "R-011", title: "发布前验收", kind: "bug", speed: 32, totalWork: 310, budgetReward: 138, experienceReward: 60, severity: 17, isFinal: false },
-  { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", speed: 34, totalWork: 880, budgetReward: 260, experienceReward: 80, severity: 100, isFinal: true }
+  { code: "R-010", title: "压测核心链路", kind: "infra", speed: 32, totalWork: 320, budgetReward: 128, experienceReward: 56, severity: 18, isFinal: false },
+  { code: "R-011", title: "发布前验收", kind: "bug", speed: 34, totalWork: 360, budgetReward: 138, experienceReward: 60, severity: 20, isFinal: false },
+  { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", speed: 34, totalWork: 1500, budgetReward: 260, experienceReward: 80, severity: 100, isFinal: true }
 ];
-const REQUEST_SPAWN_TIMES = [5, 24, 43, 62, 81, 100, 119, 138, 157, 176, 195, 240] as const;
+const REQUEST_SPAWN_TIMES = [5, 24, 43, 62, 81, 100, 119, 138, 157, 176, 206, 240] as const;
 const EVENT_SPAWN_TIMES = [38, 82, 126, 170, 214, 258] as const;
 
 export const CHANGE_EVENTS: readonly ChangeEvent[] = [
@@ -416,7 +428,10 @@ export function prioritizeRequirement(state: BattleState, requirementId: number)
       return { engineer, score: estimate };
     })
     .sort((a, b) => a.score - b.score);
-  const assignmentCount = Math.min(candidates.length, 3, Math.max(1, Math.ceil(state.engineers.length * 0.25)));
+  const secondsToBase = Math.max(0, request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed);
+  const needsRapidResponse = request.isFinal || secondsToBase <= 18;
+  const assignmentRatio = needsRapidResponse ? 0.4 : 0.25;
+  const assignmentCount = Math.min(candidates.length, 3, Math.max(1, Math.ceil(state.engineers.length * assignmentRatio)));
   const assigned = ranked.slice(0, assignmentCount).map(({ engineer }) => engineer);
   const interruptedRequests = [...new Set(assigned
     .map((engineer) => state.requests.find((candidate) => candidate.id === engineer.targetRequestId))
@@ -463,6 +478,26 @@ export function activateShipIt(state: BattleState): boolean {
     cooldown: SHIP_IT_COOLDOWN
   });
   return true;
+}
+
+/** Authoritative world-space post for an engineer when no request is assigned. */
+export function getEngineerHomeX(engineer: Engineer): number {
+  const column = engineer.lane % HOME_STATION_COLUMNS;
+  return HOME_STATION_START_X + column * HOME_STATION_SPACING;
+}
+
+/**
+ * Returns the actual world-space position used both for movement and rendering.
+ * Assigned engineers receive stable, separated slots around their request.
+ */
+export function getEngineerWorkstationX(state: BattleState, engineer: Engineer): number | null {
+  const request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
+  if (!request) return null;
+  const assigned = state.engineers
+    .filter((candidate) => candidate.targetRequestId === request.id)
+    .sort((a, b) => a.id - b.id);
+  const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
+  return getWorkstationXForSlot(state, engineer, request, slot);
 }
 
 export function advanceBattle(state: BattleState, frameDelta: number): void {
@@ -542,7 +577,7 @@ function advanceHiring(state: BattleState, delta: number): void {
   if (order.remaining > 0) return;
 
   const definition = getEngineerDefinition(order.role);
-  const lane = state.nextEngineerId % 5;
+  const lane = state.nextEngineerId - 1;
   state.queue.shift();
   state.engineers.push({ id: state.nextEngineerId++, role: definition.id, lane, x: ENGINEER_SPAWN_X, targetRequestId: null, action: "idle" });
   setNotice(state, `${definition.name}到岗`);
@@ -582,27 +617,40 @@ function updateRequests(state: BattleState, delta: number): void {
 }
 
 function updateEngineers(state: BattleState, delta: number): void {
+  assignEngineerTargets(state);
+  const contributorsByRequest = new Map<number, number>();
   for (const engineer of state.engineers) {
     if (state.phase !== "running") return;
-    let request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
+    const request = state.requests.find((candidate) => candidate.id === engineer.targetRequestId);
     if (!request) {
-      if (state.prioritizedRequestId !== null && state.priorityEngineerIds.includes(engineer.id)) {
-        request = state.requests.find((candidate) => candidate.id === state.prioritizedRequestId);
+      setEngineerTarget(engineer, null);
+      const homeX = getEngineerHomeX(engineer);
+      if (Math.abs(engineer.x - homeX) > MOVE_ARRIVAL_EPSILON) {
+        engineer.x += Math.sign(homeX - engineer.x) * Math.min(getEngineerDefinition(engineer.role).moveSpeed * delta, Math.abs(homeX - engineer.x));
+        engineer.action = "moving";
+      } else {
+        engineer.x = homeX;
+        engineer.action = "idle";
       }
-      request ??= [...state.requests].sort((a, b) => Math.abs(a.x - engineer.x) - Math.abs(b.x - engineer.x))[0];
-      engineer.targetRequestId = request?.id ?? null;
-    }
-    if (!request) {
-      engineer.action = "idle";
       continue;
     }
 
     const definition = getEngineerDefinition(engineer.role);
-    const distance = request.x - engineer.x;
-    if (Math.abs(distance) > definition.workRange) {
-      const direction = Math.sign(distance);
-      engineer.x += direction * Math.min(definition.moveSpeed * delta, Math.abs(distance) - definition.workRange);
+    const assigned = state.engineers
+      .filter((candidate) => candidate.targetRequestId === request.id)
+      .sort((a, b) => a.id - b.id);
+    const slot = Math.max(0, assigned.findIndex((candidate) => candidate.id === engineer.id));
+    const workstationX = getWorkstationXForSlot(state, engineer, request, slot);
+    const destinationX = getEngineerDestinationX(state, engineer, request, slot);
+    if (Math.abs(destinationX - engineer.x) > MOVE_ARRIVAL_EPSILON) {
+      const distanceToDestination = destinationX - engineer.x;
+      engineer.x += Math.sign(distanceToDestination) * Math.min(definition.moveSpeed * delta, Math.abs(distanceToDestination));
       engineer.action = "moving";
+      continue;
+    }
+    engineer.x = destinationX;
+    if (destinationX !== workstationX || Math.abs(request.x - workstationX) > definition.workRange) {
+      engineer.action = "idle";
       continue;
     }
 
@@ -618,11 +666,110 @@ function updateEngineers(state: BattleState, delta: number): void {
     const shipItBonus = state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
     const rushBonus = Math.max(eventRushBonus, shipItBonus);
     const incidentPenalty = state.elapsed < state.incidentUntil ? 0.55 : 1;
-    const work = definition.workRate * focusBonus * debtPenalty * eraBonus * rushBonus * incidentPenalty * delta;
+    const contributors = contributorsByRequest.get(request.id) ?? 0;
+    const cooperation = COLLABORATION_RETURNS[contributors] ?? COLLABORATION_RETURNS.at(-1)!;
+    const work = definition.workRate * focusBonus * debtPenalty * eraBonus * rushBonus * incidentPenalty * cooperation * delta;
+    contributorsByRequest.set(request.id, contributors + 1);
     request.remainingWork = Math.max(0, request.remainingWork - work);
     if (engineer.role === "agent") request.agentWork += work;
     if (request.remainingWork <= 0) completeRequirement(state, request);
   }
+}
+
+function getFrontlineStagingX(engineer: Engineer): number {
+  const column = engineer.lane % HOME_STATION_COLUMNS;
+  return Math.min(MAX_FRONTLINE_X - DEFENSE_HOME_MARGIN, FRONTLINE_STAGING_START_X + column * FRONTLINE_STAGING_SPACING);
+}
+
+function getWorkstationXForSlot(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
+  const definition = getEngineerDefinition(engineer.role);
+  if (Math.abs(request.x - engineer.x) <= definition.workRange) {
+    const previousWorkers = state.engineers
+      .filter((candidate) => candidate.targetRequestId === request.id && candidate.id < engineer.id)
+      .sort((a, b) => a.id - b.id);
+    const spacedFromPreviousWorkers = previousWorkers.every((candidate) => Math.abs(candidate.x - engineer.x) >= WORK_STATION_SEPARATION);
+    // Workers who already have a clear, in-range station keep it as the task
+    // moves. This removes the repeated stop/run animation caused by chasing a
+    // station that shifted a fraction of a world unit on every simulation tick.
+    if ((slot === 0 || engineer.action === "working") && spacedFromPreviousWorkers) return engineer.x;
+  }
+  const plannedOffset = WORK_STATION_OFFSETS[slot % WORK_STATION_OFFSETS.length];
+  const offset = Math.max(-(definition.workRange - 6), Math.min(definition.workRange - 6, plannedOffset));
+  return Math.max(BASE_FRONT_EDGE + 12, Math.min(MAX_FRONTLINE_X, request.x + offset));
+}
+
+function getEngineerDestinationX(state: BattleState, engineer: Engineer, request: Requirement, slot: number): number {
+  const definition = getEngineerDefinition(engineer.role);
+  const workX = getWorkstationXForSlot(state, engineer, request, slot);
+  // When a request is still at the far edge, hold a distributed staging line
+  // instead of sending every assigned engineer to the same hard frontline cap.
+  if (Math.abs(request.x - workX) > definition.workRange) return getFrontlineStagingX(engineer);
+  return workX;
+}
+
+function assignmentScore(state: BattleState, engineer: Engineer, request: Requirement, assigned: number): number {
+  const definition = getEngineerDefinition(engineer.role);
+  const focusBonus = definition.focus === "any"
+    ? 1
+    : definition.focus === request.kind
+      ? (definition.id === "qa" ? 1.5 : 1.35)
+      : 0.58;
+  const destinationX = getEngineerDestinationX(state, engineer, request, assigned);
+  const travelSeconds = Math.max(0, Math.abs(destinationX - engineer.x)) / definition.moveSpeed;
+  const secondsToBase = Math.max(1, (request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed));
+  const urgency = 1 + Math.min(0.8, request.severity / 45) + Math.min(1.3, 30 / Math.max(10, secondsToBase)) + (request.isFinal ? 0.75 : 0);
+  const debtPenalty = state.techDebt <= 60 ? 1 : 1 - Math.min(0.42, (state.techDebt - 60) * 0.0035);
+  const expectedSoloWork = definition.workRate * focusBonus * debtPenalty * ERAS[state.techEra].productivity;
+  const predictedWorkSeconds = request.remainingWork / Math.max(1, expectedSoloWork);
+  const closingBonus = request.remainingWork <= expectedSoloWork * 2 ? 1.75 : request.remainingWork <= expectedSoloWork * 5 ? 1.25 : 1;
+  const groupLimit = request.isFinal ? 5 : secondsToBase < predictedWorkSeconds * 1.2 ? 4 : secondsToBase < predictedWorkSeconds * 2 ? 3 : 2;
+  if (assigned >= groupLimit) return 0;
+  const workload = 0.55 + 0.45 * Math.min(1, request.remainingWork / Math.max(1, expectedSoloWork * 5));
+  const dispatchLoad = 1 / (1 + assigned * 1);
+  const travel = 1 / (1 + travelSeconds * 0.045);
+  const priority = state.prioritizedRequestId === request.id ? 1.35 : 1;
+  return focusBonus * urgency * workload * dispatchLoad * travel * priority * closingBonus;
+}
+
+function assignEngineerTargets(state: BattleState): void {
+  const requestsById = new Map(state.requests.map((request) => [request.id, request]));
+  const assignedByRequest = new Map<number, number>();
+  const activePriorityIds = new Set<number>();
+  if (state.prioritizedRequestId !== null && requestsById.has(state.prioritizedRequestId)) {
+    for (const id of state.priorityEngineerIds) {
+      const engineer = state.engineers.find((candidate) => candidate.id === id);
+      if (!engineer) continue;
+      setEngineerTarget(engineer, requestsById.get(state.prioritizedRequestId) ?? null);
+      activePriorityIds.add(id);
+      assignedByRequest.set(state.prioritizedRequestId, (assignedByRequest.get(state.prioritizedRequestId) ?? 0) + 1);
+    }
+  }
+
+  const dispatchOrder = [...state.engineers]
+    .filter((engineer) => !activePriorityIds.has(engineer.id))
+    .sort((a, b) => Number(b.action === "working") - Number(a.action === "working") || a.id - b.id);
+  for (const engineer of dispatchOrder) {
+    const current = requestsById.get(engineer.targetRequestId ?? -1);
+    let best: Requirement | undefined;
+    let bestScore = 0;
+    for (const request of state.requests) {
+      const count = assignedByRequest.get(request.id) ?? 0;
+      const score = assignmentScore(state, engineer, request, count) * (request.id === current?.id ? 1.18 : 1);
+      if (score > bestScore) {
+        best = request;
+        bestScore = score;
+      }
+    }
+    if (current && assignmentScore(state, engineer, current, assignedByRequest.get(current.id) ?? 0) >= bestScore * TARGET_RETENTION_RATIO) best = current;
+    setEngineerTarget(engineer, best ?? null);
+    if (best) assignedByRequest.set(best.id, (assignedByRequest.get(best.id) ?? 0) + 1);
+  }
+}
+
+function setEngineerTarget(engineer: Engineer, request: Requirement | null): void {
+  const nextTargetId = request?.id ?? null;
+  if (engineer.targetRequestId === nextTargetId) return;
+  engineer.targetRequestId = nextTargetId;
 }
 
 function completeRequirement(state: BattleState, request: Requirement): void {

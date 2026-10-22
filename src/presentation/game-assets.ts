@@ -66,6 +66,20 @@ export interface EngineerAnimationDefinition {
   frameRate: number;
 }
 
+export function animationFrameOffset(definition: EngineerAnimationDefinition, textureFrameIndex: number): number {
+  const offset = textureFrameIndex - definition.start;
+  return ((offset % definition.frameCount) + definition.frameCount) % definition.frameCount;
+}
+
+export function runAnimationFrameOffset(
+  definition: EngineerAnimationDefinition,
+  distance: number,
+  moveSpeed: number,
+  phase = 0
+): number {
+  return animationFrameOffset(definition, definition.start + Math.floor(distance / (moveSpeed / definition.frameRate) + phase));
+}
+
 export const ENGINEER_ANIMATION_SHEETS = {
   intern: {
     key: "engineer-anim-intern",
@@ -104,35 +118,44 @@ export const ENGINEER_ANIMATION_SHEETS = {
   },
 } as const;
 
-export const ENGINEER_ANIMATIONS: Record<
-  EngineerId,
-  Record<EngineerAction, EngineerAnimationDefinition>
-> = {
+// The 8-frame run loop is paced to each role's actual travel speed. This keeps
+// the feet from skating when a slower role and a faster role share one scene.
+// Mirrored from ENGINEER_DEFS in game.ts and checked in game-assets.test.ts.
+const ENGINEER_MOVE_SPEEDS: Record<EngineerId, number> = {
+  intern: 58,
+  frontend: 62,
+  backend: 54,
+  qa: 57,
+  agent: 70
+};
+const runFrameRate = (role: EngineerId): number => ENGINEER_MOVE_SPEEDS[role] * 0.2;
+
+export const ENGINEER_ANIMATIONS: Record<EngineerId, Record<EngineerAction, EngineerAnimationDefinition>> = {
   intern: {
     idle: { start: 0, frameCount: 6, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 14 },
-    working: { start: 16, frameCount: 6, frameRate: 8 },
+    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("intern") },
+    working: { start: 16, frameCount: 6, frameRate: 8 }
   },
   frontend: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 14 },
-    working: { start: 16, frameCount: 8, frameRate: 8 },
+    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("frontend") },
+    working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   backend: {
     idle: { start: 0, frameCount: 6, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 14 },
-    working: { start: 16, frameCount: 6, frameRate: 8 },
+    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("backend") },
+    working: { start: 16, frameCount: 6, frameRate: 8 }
   },
   qa: {
     idle: { start: 0, frameCount: 4, frameRate: 6 },
-    moving: { start: 8, frameCount: 8, frameRate: 14 },
-    working: { start: 16, frameCount: 8, frameRate: 8 },
+    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("qa") },
+    working: { start: 16, frameCount: 8, frameRate: 8 }
   },
   agent: {
     idle: { start: 0, frameCount: 6, frameRate: 7 },
-    moving: { start: 8, frameCount: 8, frameRate: 14 },
-    working: { start: 16, frameCount: 6, frameRate: 10 },
-  },
+    moving: { start: 8, frameCount: 8, frameRate: runFrameRate("agent") },
+    working: { start: 16, frameCount: 6, frameRate: 10 }
+  }
 };
 
 export const ENGINEER_SPRITE_SHEETS = Object.values(ENGINEER_ANIMATION_SHEETS);
