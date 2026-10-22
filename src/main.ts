@@ -37,11 +37,14 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("animation-p
       },
       scene: [BattleScene]
     });
+    const playfieldResizeObserver = new ResizeObserver(syncPlayfieldBounds);
+    playfieldResizeObserver.observe(stage);
     game.events.once("ready", syncPlayfieldBounds);
     game.scale.on(Phaser.Scale.Events.RESIZE, syncPlayfieldBounds);
-    window.addEventListener("resize", syncPlayfieldBounds);
-    document.addEventListener("fullscreenchange", syncPlayfieldBounds);
-    new ResizeObserver(syncPlayfieldBounds).observe(stage);
+    game.events.once(Phaser.Core.Events.DESTROY, () => {
+      game.scale.off(Phaser.Scale.Events.RESIZE, syncPlayfieldBounds);
+      playfieldResizeObserver.disconnect();
+    });
     game.registry.set("updateHud", updateHud);
     return game;
   });
