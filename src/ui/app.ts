@@ -36,7 +36,11 @@ export class GameApp {
   private readonly telemetry = new TelemetryReporter();
 
   constructor(private readonly root: HTMLElement, private readonly createGame: CreateGame) {
-    document.documentElement.style.setProperty("--studio-background", `url("${GAME_ASSETS.backgrounds[0].src}")`);
+    // CSS 变量里的 url() 是相对"使用它的样式表"解析的，而样式表位于 /assets/ 下，
+    // 直接塞 "./assets/..." 会被解析成 /assets/assets/... 导致 404。
+    // 这里统一转成绝对 URL，使其与样式表位置无关。
+    const menuBackground = new URL(GAME_ASSETS.backgrounds[0].src, document.baseURI).href;
+    document.documentElement.style.setProperty("--studio-background", `url("${menuBackground}")`);
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     document.addEventListener("visibilitychange", () => this.handleVisibilityChange());
     this.telemetry.enter();
