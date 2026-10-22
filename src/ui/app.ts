@@ -41,6 +41,7 @@ export class GameApp {
   private game: Phaser.Game | null = null;
   private visibilityPaused = false;
   private telemetryCursor = 0;
+  private stageEra = -1;
   private readonly telemetry = new TelemetryReporter();
   private readonly community: CommunityPanel;
   private readonly audio = new AudioEngine();
@@ -468,6 +469,14 @@ export class GameApp {
 
   private updateHud(state: BattleState): void {
     if (!this.root.querySelector(".battle-ui")) return;
+    if (this.stageEra !== state.techEra) {
+      const background = GAME_ASSETS.backgrounds[state.techEra] ?? GAME_ASSETS.backgrounds[0];
+      document.querySelector<HTMLElement>("#stage")?.style.setProperty(
+        "--battle-background",
+        `url("${new URL(background.src, document.baseURI).href}")`
+      );
+      this.stageEra = state.techEra;
+    }
     this.audio.update(state);
     this.consumeTelemetry(state);
     const timeLeft = Math.max(0, Math.ceil(ROUND_DURATION - state.elapsed));
