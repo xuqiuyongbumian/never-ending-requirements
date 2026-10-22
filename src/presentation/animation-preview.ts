@@ -5,9 +5,10 @@ import {
   ENGINEER_ANIMATION_SHEETS,
   ENGINEER_SPRITE_SHEETS,
   engineerAnimationKey,
+  runAnimationFrameOffset,
   type EngineerAction
 } from "./game-assets";
-import type { EngineerId } from "../core/game";
+import { getEngineerDefinition, type EngineerId } from "../core/game";
 import "./animation-preview.css";
 
 const PREVIEW_WIDTH = 1280;
@@ -28,6 +29,10 @@ interface PreviewActor {
   paused: boolean;
   rate: number;
   frameIndex: number;
+  runDistance: number;
+  runMode: "stationary" | "displacement";
+  direction: 1 | -1;
+  baseX: number;
 }
 
 class AnimationPreviewScene extends Phaser.Scene {
@@ -93,9 +98,31 @@ class AnimationPreviewScene extends Phaser.Scene {
       const sheet = ENGINEER_ANIMATION_SHEETS[role];
       const sprite = this.add.sprite(x, FLOOR_Y, sheet.key, 0).setOrigin(0.5, 1).setDepth(1);
       sprite.setScale(Math.min(158 / sheet.frameHeight, 164 / sheet.frameWidth));
-      this.actors.set(role, { sprite, action: "idle", paused: false, rate: 1, frameIndex: 0 });
+      this.actors.set(role, {
+        sprite, action: "idle", paused: false, rate: 1, frameIndex: 0,
+        runDistance: 0, runMode: "stationary", direction: 1, baseX: x
+      });
       this.play(role, "idle");
     });
+  }
+
+  update(_time: number, deltaMs: number): void {
+    for (const [role, actor] of this.actors) {
+      if (actor.action !== "moving" || actor.paused) continue;
+      const moveSpeed = getEngineerDefinition(role).moveSpeed;
+      const definition = ENGINEER_ANIMATIONS[role].moving;
+      actor.runDistance += moveSpeed * actor.rate * deltaMs / 1000;
+      const frameIndex = runAnimationFrameOffset(definition, actor.runDistance, moveSpeed);
+      if (frameIndex !== actor.frameIndex) {
+        actor.frameIndex = frameIndex;
+        actor.sprite.setFrame(definition.start + frameIndex);
+      }
+      const phase = actor.runDistance % 84;
+      const offset = phase <= 42 ? phase : 84 - phase;
+      actor.sprite.setX(actor.runMode === "displacement" ? actor.baseX + actor.direction * offset : actor.baseX);
+      const facingLeft = actor.runMode === "displacement" && (phase > 42 ? actor.direction > 0 : actor.direction < 0);
+      actor.sprite.setFlipX(facingLeft);
+    }
   }
 
   setAction(role: EngineerId, action: EngineerAction): void {
@@ -106,13 +133,46 @@ class AnimationPreviewScene extends Phaser.Scene {
     const actor = this.actors.get(role);
     if (!actor) return;
     actor.rate = rate;
-    actor.sprite.anims.timeScale = rate;
+    if (actor.action !== "moving") actor.sprite.anims.timeScale = rate;
+  }
+
+  setRunMode(role: EngineerId, mode: PreviewActor["runMode"]): void {
+    const actor = this.actors.get(role);
+    if (!actor) return;
+    actor.runMode = mode;
+    actor.sprite.setX(actor.baseX);
+  }
+
+  setDirection(role: EngineerId): boolean {
+    const actor = this.actors.get(role);
+    if (!actor) return false;
+    actor.direction *= -1;
+    actor.sprite.setFlipX(actor.direction < 0);
+    return actor.direction < 0;
+  }
+
+  getStatus(role: EngineerId): string {
+    const actor = this.actors.get(role);
+    if (!actor) return "";
+    const definition = ENGINEER_ANIMATIONS[role][actor.action];
+    const frame = this.currentFrameIndex(role, actor) + 1;
+    if (actor.action !== "moving") return `帧 ${frame}/${definition.frameCount}`;
+    const stride = getEngineerDefinition(role).moveSpeed / ENGINEER_ANIMATIONS[role].moving.frameRate;
+    const phase = actor.runDistance % 84;
+    const facingLeft = actor.runMode === "displacement"
+      ? phase > 42 ? actor.direction > 0 : actor.direction < 0
+      : actor.direction < 0;
+    const direction = facingLeft ? "左" : "右";
+    return `帧 ${frame}/${definition.frameCount} · 位移 ${actor.runDistance.toFixed(1)} · 步幅 ${stride.toFixed(1)}/帧 · 朝${direction}`;
   }
 
   togglePaused(role: EngineerId): boolean {
     const actor = this.actors.get(role);
     if (!actor) return false;
     actor.paused = !actor.paused;
+    if (actor.action === "moving") {
+      return actor.paused;
+    }
     if (actor.paused) {
       actor.frameIndex = this.currentFrameIndex(role, actor);
       actor.sprite.anims.pause();
@@ -131,7 +191,7 @@ class AnimationPreviewScene extends Phaser.Scene {
     if (!actor.paused) {
       actor.paused = true;
       actor.frameIndex = this.currentFrameIndex(role, actor);
-      actor.sprite.anims.pause();
+      if (actor.action !== "moving") actor.sprite.anims.pause();
     }
     const definition = ENGINEER_ANIMATIONS[role][actor.action];
     actor.frameIndex = (actor.frameIndex + delta + definition.frameCount) % definition.frameCount;
@@ -144,13 +204,22 @@ class AnimationPreviewScene extends Phaser.Scene {
     if (!actor) return;
     actor.action = action;
     actor.frameIndex = 0;
-    actor.sprite.play(engineerAnimationKey(role, action), true);
-    actor.sprite.anims.timeScale = actor.rate;
-    if (actor.paused) actor.sprite.anims.pause();
+    actor.runDistance = 0;
+    actor.sprite.setX(actor.baseX);
+    if (action === "moving") {
+      actor.sprite.anims.stop();
+      actor.sprite.setFrame(ENGINEER_ANIMATIONS[role].moving.start);
+    } else {
+      actor.sprite.play(engineerAnimationKey(role, action), true);
+      actor.sprite.anims.timeScale = actor.rate;
+      if (actor.paused) actor.sprite.anims.pause();
+    }
+    actor.sprite.setFlipX(actor.direction < 0);
   }
 
   private currentFrameIndex(role: EngineerId, actor: PreviewActor): number {
     const definition = ENGINEER_ANIMATIONS[role][actor.action];
+    if (actor.action === "moving") return actor.frameIndex;
     const index = actor.sprite.anims.currentFrame?.index;
     return typeof index === "number" ? animationFrameOffset(definition, index) : actor.frameIndex;
   }
@@ -173,6 +242,11 @@ export function mountAnimationPreview(root: HTMLElement): void {
               <button type="button" data-action="idle">待机</button>
               <button type="button" data-action="moving">移动</button>
               <button type="button" data-action="working">工作</button>
+            </div>
+            <div class="animation-preview-actions" role="group" aria-label="${ENGINEER_NAMES[role]}位移预览">
+              <button type="button" data-run-mode="stationary" aria-pressed="true">原地跑</button>
+              <button type="button" data-run-mode="displacement" aria-pressed="false">位移驱动</button>
+              <button type="button" data-direction aria-pressed="false">朝右</button>
             </div>
             <div class="animation-preview-info" data-preview-info>载入动画元数据…</div>
             <label class="animation-preview-speed">播放速度 <output data-rate-label>1.0×</output>
@@ -209,13 +283,29 @@ export function mountAnimationPreview(root: HTMLElement): void {
     const reportAction = (action: EngineerAction): void => {
       currentAction = action;
       const definition = ENGINEER_ANIMATIONS[role][action];
-      info!.textContent = `${engineerAnimationKey(role, action)} · ${definition.frameCount} 帧 · RGBA alpha · anchor (0.5, 1)`;
-      if (frameIndex) frameIndex.textContent = `当前帧 1 / ${definition.frameCount}`;
+      info!.textContent = `${engineerAnimationKey(role, action)} · ${definition.frameCount} 帧 · 256×256 · RGBA alpha · anchor (0.5, 1)`;
+      if (frameIndex) frameIndex.textContent = `帧 1/${definition.frameCount}`;
       card.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
         button.setAttribute("aria-pressed", String(button.dataset.action === action));
       });
       scene.setAction(role, action);
     };
+
+    card.querySelectorAll<HTMLButtonElement>("[data-run-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.dataset.runMode as "stationary" | "displacement";
+        scene.setRunMode(role, mode);
+        card.querySelectorAll<HTMLButtonElement>("[data-run-mode]").forEach((option) => {
+          option.setAttribute("aria-pressed", String(option === button));
+        });
+      });
+    });
+    const directionButton = card.querySelector<HTMLButtonElement>("[data-direction]");
+    directionButton?.addEventListener("click", () => {
+      const facingLeft = scene.setDirection(role);
+      directionButton.textContent = facingLeft ? "朝左" : "朝右";
+      directionButton.setAttribute("aria-pressed", String(facingLeft));
+    });
 
     card.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
       button.addEventListener("click", () => reportAction(button.dataset.action as EngineerAction));
@@ -236,7 +326,7 @@ export function mountAnimationPreview(root: HTMLElement): void {
       button.addEventListener("click", () => {
         const definition = ENGINEER_ANIMATIONS[role][currentAction];
         const index = scene.stepFrame(role, button.dataset.step === "-1" ? -1 : 1);
-        if (index !== null && frameIndex) frameIndex.textContent = `当前帧 ${index + 1} / ${definition.frameCount} · 已暂停`;
+        if (index !== null && frameIndex) frameIndex.textContent = `帧 ${index + 1}/${definition.frameCount} · 已暂停`;
         if (toggle) {
           toggle.textContent = "继续";
           toggle.setAttribute("aria-pressed", "true");
@@ -246,5 +336,15 @@ export function mountAnimationPreview(root: HTMLElement): void {
     reportAction("idle");
   }
 
-  window.addEventListener("pagehide", () => game.destroy(true), { once: true });
+  const statusTimer = window.setInterval(() => {
+    for (const card of root.querySelectorAll<HTMLElement>("[data-preview-role]")) {
+      const role = card.dataset.previewRole as EngineerId;
+      const status = card.querySelector<HTMLElement>("[data-frame-index]");
+      if (status) status.textContent = scene.getStatus(role);
+    }
+  }, 100);
+  window.addEventListener("pagehide", () => {
+    window.clearInterval(statusTimer);
+    game.destroy(true);
+  }, { once: true });
 }
