@@ -54,6 +54,17 @@ export interface TelemetryOptions {
   schedule?: (callback: () => void, delayMs: number) => unknown;
 }
 
+/**
+ * 生产构建默认上报到同源：网关会把 /api/* 反代到后端。
+ * 历史上未配置 VITE_API_BASE_URL 等价于「完全不上报」，导致线上埋点静默失效且无任何报错。
+ * 开发环境保持静默，避免本地调试污染线上数据。
+ */
+function defaultApiBaseUrl(): string {
+  if (!import.meta.env?.PROD) return "";
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+}
+
 export class TelemetryReporter {
   private readonly sessionId = makeId();
   private runId: string | null = null;
@@ -70,7 +81,8 @@ export class TelemetryReporter {
   constructor(legacyEndpoint?: string, options: TelemetryOptions = {}) {
     const envApiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? "";
     const envLegacyEndpoint = import.meta.env?.VITE_ANALYTICS_ENDPOINT ?? "";
-    this.apiBaseUrl = trimTrailingSlash(options.apiBaseUrl ?? (legacyEndpoint === undefined ? envApiBaseUrl : ""));
+    const configuredBaseUrl = options.apiBaseUrl ?? (legacyEndpoint === undefined ? envApiBaseUrl : "");
+    this.apiBaseUrl = trimTrailingSlash(configuredBaseUrl || defaultApiBaseUrl());
     this.legacyEndpoint = this.apiBaseUrl ? "" : (legacyEndpoint ?? envLegacyEndpoint);
     this.gameVersion = options.gameVersion ?? import.meta.env?.VITE_GAME_VERSION ?? "0.1.0";
     this.now = options.now ?? Date.now;
