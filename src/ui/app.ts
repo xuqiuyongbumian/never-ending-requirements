@@ -30,6 +30,7 @@ import { AudioEngine } from "../audio/audio-engine";
 import { withAudioPatch } from "../audio/audio-settings";
 import { audioPanelMarkup, bindAudioPanel, syncAudioPanel } from "./audio-panel";
 import { CommunityPanel } from "./community";
+import { readNickname, saveNickname } from "./nickname";
 import { buildLocalAchievementWall, evaluateCurrentRun, localPersonalBest } from "./local-stats";
 import { summarizeRun, TelemetryReporter } from "./telemetry";
 import { getDeliveryProgress } from "./run-progress";
@@ -38,7 +39,6 @@ import { calculateRunScore } from "../../shared/scoring.ts";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
 
-const NICKNAME_KEY = "1024-ai-game-nickname";
 
 export class GameApp {
   private state: BattleState | null = null;
@@ -152,8 +152,8 @@ export class GameApp {
             </div>
             <div class="menu-community">
               <label class="nickname-field" for="nickname-input">
-                <span>排行榜昵称<small>仅随结算上报，可留空</small></span>
-                <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="匿名工程师" value="${escapeAttribute(readNickname())}" />
+                <span>玩家昵称<small>必填 · 未填写会自动生成占位名</small></span>
+                <input id="nickname-input" type="text" maxlength="24" autocomplete="nickname" placeholder="自动生成，如 赶工工程师-3F7A" value="${escapeAttribute(readNickname())}" />
               </label>
               <div class="menu-community-actions">
                 <button class="menu-ghost-button" id="open-leaderboard" type="button">排行榜 ↗</button>
@@ -169,8 +169,16 @@ export class GameApp {
     this.root.querySelector<HTMLButtonElement>("#fullscreen-menu")?.addEventListener("click", () => void this.toggleFullscreen());
     const nicknameInput = this.root.querySelector<HTMLInputElement>("#nickname-input");
     nicknameInput?.addEventListener("input", () => {
-      saveNickname(nicknameInput.value);
-      this.telemetry.setNickname(nicknameInput.value);
+      // 输入中允许暂时为空，失焦时再补占位名，避免打字时被强行回填。
+      if (!nicknameInput.value.trim()) return;
+      const name = saveNickname(nicknameInput.value);
+      this.telemetry.setNickname(name);
+    });
+    nicknameInput?.addEventListener("blur", () => {
+      if (nicknameInput.value.trim()) return;
+      const name = saveNickname("");
+      nicknameInput.value = name;
+      this.telemetry.setNickname(name);
     });
     this.root.querySelector("#open-achievements-wall")?.addEventListener("click", () => this.community.openAchievements());
     this.root.querySelector("#open-leaderboard")?.addEventListener("click", () => this.community.openLeaderboard());
@@ -768,24 +776,6 @@ export class GameApp {
         { duration: 260, easing: "cubic-bezier(.2,.8,.25,1)" }
       );
     }
-  }
-}
-
-function readNickname(): string {
-  try {
-    return localStorage.getItem(NICKNAME_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function saveNickname(value: string): void {
-  try {
-    const trimmed = value.trim().replace(/\s+/g, " ").slice(0, 24);
-    if (trimmed) localStorage.setItem(NICKNAME_KEY, trimmed);
-    else localStorage.removeItem(NICKNAME_KEY);
-  } catch {
-    // Nicknames are a convenience; storage failures must not block play.
   }
 }
 
