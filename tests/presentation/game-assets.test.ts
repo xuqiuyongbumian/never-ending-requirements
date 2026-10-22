@@ -82,20 +82,20 @@ test("converts global spritesheet frame indexes to local action-frame indexes", 
   assert.equal(animationFrameOffset(working, 15), 5);
 });
 
-test("paces each run cycle against the role's real movement speed", () => {
+test("paces each run cycle to a four-unit stride at the role's real movement speed", () => {
   for (const role of Object.keys(ENGINEER_ANIMATIONS) as Array<keyof typeof ENGINEER_ANIMATIONS>) {
-    assert.equal(ENGINEER_ANIMATIONS[role].moving.frameRate, getEngineerDefinition(role).moveSpeed * 0.2);
+    assert.equal(ENGINEER_ANIMATIONS[role].moving.frameRate, getEngineerDefinition(role).moveSpeed / 4);
   }
 });
 
-test("run animation advances one frame per travelled stride and loops by distance", () => {
+test("run animation advances every four traveled units and loops by distance", () => {
   const definition = ENGINEER_ANIMATIONS.intern.moving;
   const speed = getEngineerDefinition("intern").moveSpeed;
   assert.equal(runAnimationFrameOffset(definition, 0, speed), 0);
-  assert.equal(runAnimationFrameOffset(definition, 4.99, speed), 0);
-  assert.equal(runAnimationFrameOffset(definition, 5, speed), 1);
-  assert.equal(runAnimationFrameOffset(definition, 39.99, speed), 7);
-  assert.equal(runAnimationFrameOffset(definition, 40, speed), 0);
+  assert.equal(runAnimationFrameOffset(definition, 3.99, speed), 0);
+  assert.equal(runAnimationFrameOffset(definition, 4, speed), 1);
+  assert.equal(runAnimationFrameOffset(definition, 31.99, speed), 7);
+  assert.equal(runAnimationFrameOffset(definition, 32, speed), 0);
 });
 
 test("selects the request mascot from its live type and workload", () => {
