@@ -1,6 +1,7 @@
 import type { EngineerId, Requirement } from "../core/game";
 
 const asset = (path: string) => `${import.meta.env?.BASE_URL ?? "/"}${path}`;
+const engineerFrame = { frameWidth: 256, frameHeight: 256, margin: 2, spacing: 2 };
 
 export const GAME_ASSETS = {
   characters: {
@@ -92,36 +93,31 @@ export const ENGINEER_ANIMATION_SHEETS = {
   intern: {
     key: "engineer-anim-intern",
     src: asset("assets/game/animations/intern.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   frontend: {
     key: "engineer-anim-frontend",
     src: asset("assets/game/animations/frontend.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   backend: {
     key: "engineer-anim-backend",
     src: asset("assets/game/animations/backend.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   qa: {
     key: "engineer-anim-tester",
     src: asset("assets/game/animations/tester.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 126,
   },
   agent: {
     key: "engineer-anim-agent",
     src: asset("assets/game/animations/agent.png"),
-    frameWidth: 256,
-    frameHeight: 256,
+    ...engineerFrame,
     displayHeight: 136,
   },
 } as const;
