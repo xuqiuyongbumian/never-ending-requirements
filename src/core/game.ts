@@ -51,6 +51,7 @@ export interface Requirement {
   experienceReward: number;
   severity: number;
   isFinal: boolean;
+  isBoss?: boolean;
   agentWork: number;
 }
 
@@ -103,6 +104,7 @@ export interface BattleState {
   nextEngineerId: number;
   nextRequestId: number;
   requestScheduleIndex: number;
+  bossSpawned: boolean;
   eventScheduleIndex: number;
   nextEventAt: number;
   randomSeed: number;
@@ -138,7 +140,7 @@ export const SHIP_IT_WORK_BONUS = 0.4;
 export const PRIORITY_COOLDOWN = 8;
 export const REPEAT_ROLE_COST_STEP = 0.8;
 const WORKING_REQUEST_SPEED_MULTIPLIER = 0.55;
-const GOLD_PER_SECOND = 1.5;
+export const PASSIVE_BUDGET_PER_SECOND = 0.35;
 const SIMULATION_STEP = 1 / 30;
 const ENGINEER_SPAWN_X = 440;
 const MAX_FRONTLINE_X = 1120;
@@ -164,19 +166,32 @@ const renderPositionSnapshots = new WeakMap<BattleState, RenderPositionSnapshot>
 const MAX_INTERPOLATION_DISTANCE = WORLD_WIDTH / 4;
 
 const REQUEST_SCHEDULE: readonly Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork">[] = [
-  { code: "R-001", title: "搭好开发环境", kind: "infra", speed: 20, totalWork: 44, budgetReward: 65, experienceReward: 28, severity: 7, isFinal: false },
-  { code: "R-002", title: "产品首页原型", kind: "feature", speed: 22, totalWork: 135, budgetReward: 72, experienceReward: 30, severity: 8, isFinal: false },
-  { code: "R-003", title: "修复登录回归", kind: "bug", speed: 24, totalWork: 145, budgetReward: 78, experienceReward: 34, severity: 10, isFinal: false },
-  { code: "R-004", title: "消息中心改版", kind: "feature", speed: 25, totalWork: 175, budgetReward: 84, experienceReward: 36, severity: 9, isFinal: false },
-  { code: "R-005", title: "接入鉴权接口", kind: "infra", speed: 26, totalWork: 190, budgetReward: 92, experienceReward: 40, severity: 11, isFinal: false },
-  { code: "R-006", title: "补齐自动化测试", kind: "bug", speed: 27, totalWork: 205, budgetReward: 96, experienceReward: 42, severity: 12, isFinal: false },
-  { code: "R-007", title: "AI 摘要助手", kind: "feature", speed: 28, totalWork: 230, budgetReward: 105, experienceReward: 46, severity: 12, isFinal: false },
-  { code: "R-008", title: "支付边界校验", kind: "bug", speed: 29, totalWork: 245, budgetReward: 112, experienceReward: 48, severity: 13, isFinal: false },
-  { code: "R-009", title: "上线数据看板", kind: "feature", speed: 30, totalWork: 265, budgetReward: 120, experienceReward: 52, severity: 14, isFinal: false },
-  { code: "R-010", title: "压测核心链路", kind: "infra", speed: 32, totalWork: 320, budgetReward: 128, experienceReward: 56, severity: 18, isFinal: false },
-  { code: "R-011", title: "发布前验收", kind: "bug", speed: 34, totalWork: 360, budgetReward: 138, experienceReward: 60, severity: 20, isFinal: false },
-  { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", speed: 34, totalWork: 1500, budgetReward: 260, experienceReward: 80, severity: 100, isFinal: true }
+  { code: "R-001", title: "搭好开发环境", kind: "infra", speed: 20, totalWork: 44, budgetReward: 45, experienceReward: 28, severity: 7, isFinal: false },
+  { code: "R-002", title: "产品首页原型", kind: "feature", speed: 22, totalWork: 135, budgetReward: 50, experienceReward: 30, severity: 8, isFinal: false },
+  { code: "R-003", title: "修复登录回归", kind: "bug", speed: 24, totalWork: 145, budgetReward: 55, experienceReward: 34, severity: 10, isFinal: false },
+  { code: "R-004", title: "消息中心改版", kind: "feature", speed: 25, totalWork: 175, budgetReward: 60, experienceReward: 36, severity: 9, isFinal: false },
+  { code: "R-005", title: "接入鉴权接口", kind: "infra", speed: 26, totalWork: 190, budgetReward: 65, experienceReward: 40, severity: 11, isFinal: false },
+  { code: "R-006", title: "补齐自动化测试", kind: "bug", speed: 27, totalWork: 205, budgetReward: 65, experienceReward: 42, severity: 12, isFinal: false },
+  { code: "R-007", title: "AI 摘要助手", kind: "feature", speed: 28, totalWork: 230, budgetReward: 75, experienceReward: 46, severity: 12, isFinal: false },
+  { code: "R-008", title: "支付边界校验", kind: "bug", speed: 29, totalWork: 245, budgetReward: 80, experienceReward: 48, severity: 13, isFinal: false },
+  { code: "R-009", title: "上线数据看板", kind: "feature", speed: 30, totalWork: 265, budgetReward: 85, experienceReward: 52, severity: 14, isFinal: false },
+  { code: "R-010", title: "压测核心链路", kind: "infra", speed: 32, totalWork: 320, budgetReward: 90, experienceReward: 56, severity: 18, isFinal: false },
+  { code: "R-011", title: "发布前验收", kind: "bug", speed: 34, totalWork: 360, budgetReward: 95, experienceReward: 60, severity: 20, isFinal: false },
+  { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", speed: 34, totalWork: 1500, budgetReward: 180, experienceReward: 80, severity: 100, isFinal: true }
 ];
+const BOSS_DEFINITION: Omit<Requirement, "id" | "x" | "remainingWork" | "agentWork"> = {
+  code: "BOSS-01",
+  title: "专项大需求：大促作战室",
+  kind: "feature",
+  speed: 22,
+  totalWork: 900,
+  budgetReward: 150,
+  experienceReward: 90,
+  severity: 45,
+  isFinal: false,
+  isBoss: true
+};
+const BOSS_SPAWN_TIME = 150;
 const REQUEST_SPAWN_TIMES = [5, 24, 43, 62, 81, 100, 119, 138, 157, 176, 206, 240] as const;
 const EVENT_SPAWN_TIMES = [38, 82, 126, 170, 214, 258] as const;
 
@@ -186,7 +201,7 @@ export const CHANGE_EVENTS: readonly ChangeEvent[] = [
     title: "产品经理：再加一个小需求？",
     body: "演示前想多看一张统计卡片。接下需求能拿到额外预算，但会挤占团队带宽。",
     choices: [
-      { id: "accept-scope", label: "接下需求", description: "+70 预算、+18 经验，新增一张需求卡并增加技术债" },
+      { id: "accept-scope", label: "接下需求", description: "+45 预算、+18 经验，新增一张需求卡并增加技术债" },
       { id: "freeze-scope", label: "冻结范围", description: "减少少量预算，降低技术债并恢复项目健康" }
     ]
   },
@@ -246,7 +261,7 @@ export function createBattle(seed = 1024): BattleState {
   return {
     phase: "running",
     elapsed: 0,
-    budget: 145,
+    budget: 110,
     experience: 0,
     techDebt: 0,
     projectHealth: MAX_PROJECT_HEALTH,
@@ -257,6 +272,7 @@ export function createBattle(seed = 1024): BattleState {
     nextEngineerId: 2,
     nextRequestId: 1,
     requestScheduleIndex: 0,
+    bossSpawned: false,
     eventScheduleIndex: 0,
     nextEventAt: eventTimeAt(0, normalizedSeed),
     randomSeed: normalizedSeed,
@@ -333,10 +349,10 @@ export function chooseChange(state: BattleState, choiceId: string): boolean {
   state.pendingEvent = null;
   switch (choiceId) {
     case "accept-scope":
-      state.budget += 70;
+      state.budget += 45;
       state.experience += 18;
       addTechDebt(state, 24, "接下临时需求");
-      addRequirement(state, { code: "R-CHANGE", title: "临时统计卡片", kind: "feature", speed: 30, totalWork: 110, budgetReward: 55, experienceReward: 22, severity: 8, isFinal: false });
+      addRequirement(state, { code: "R-CHANGE", title: "临时统计卡片", kind: "feature", speed: 30, totalWork: 110, budgetReward: 40, experienceReward: 22, severity: 8, isFinal: false });
       break;
     case "freeze-scope":
       state.budget = Math.max(0, state.budget - 12);
@@ -538,7 +554,7 @@ function stepBattle(state: BattleState, delta: number): void {
     setNotice(state, "极限冲刺结束，团队恢复常规节奏");
     emitTelemetry(state, "rush_completed", { duration: SHIP_IT_DURATION });
   }
-  state.budget = Math.min(9999, state.budget + GOLD_PER_SECOND * delta);
+  state.budget = Math.min(9999, state.budget + PASSIVE_BUDGET_PER_SECOND * delta);
   advanceHiring(state, delta);
   spawnScheduledRequests(state);
   triggerChangeEvent(state);
@@ -590,6 +606,12 @@ function spawnScheduledRequests(state: BattleState): void {
     state.requestScheduleIndex += 1;
     addRequirement(state, definition);
   }
+  if (!state.bossSpawned && state.elapsed >= BOSS_SPAWN_TIME) {
+    state.bossSpawned = true;
+    addRequirement(state, BOSS_DEFINITION);
+    setNotice(state, "专项大需求进入待办：大促作战室（工期 900 工时）");
+    emitTelemetry(state, "boss_spawn", { request: BOSS_DEFINITION.code, work: BOSS_DEFINITION.totalWork });
+  }
 }
 
 function triggerChangeEvent(state: BattleState): void {
@@ -611,7 +633,7 @@ function updateRequests(state: BattleState, delta: number): void {
       clearPriorityTarget(state, request.id);
       state.projectHealth = Math.max(0, state.projectHealth - request.severity);
       setNotice(state, `${request.code} 超过响应时限，项目健康 -${request.severity}`);
-      emitTelemetry(state, "request_missed", { request: request.code, severity: request.severity, projectHealth: state.projectHealth });
+      emitTelemetry(state, "request_missed", { request: request.code, severity: request.severity, projectHealth: state.projectHealth, boss: request.isBoss === true });
       if (request.isFinal) endBattle(state, "defeat", "最终需求未能在截止前完成");
     }
   }
@@ -722,12 +744,13 @@ function assignmentScore(state: BattleState, engineer: Engineer, request: Requir
   const destinationX = getEngineerDestinationX(state, engineer, request, assigned);
   const travelSeconds = Math.max(0, Math.abs(destinationX - engineer.x)) / definition.moveSpeed;
   const secondsToBase = Math.max(1, (request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed));
-  const urgency = 1 + Math.min(0.8, request.severity / 45) + Math.min(1.3, 30 / Math.max(10, secondsToBase)) + (request.isFinal ? 0.75 : 0);
+  const bossLike = request.isFinal || request.isBoss === true;
+  const urgency = 1 + Math.min(0.8, request.severity / 45) + Math.min(1.3, 30 / Math.max(10, secondsToBase)) + (bossLike ? 0.75 : 0);
   const debtPenalty = state.techDebt <= 60 ? 1 : 1 - Math.min(0.42, (state.techDebt - 60) * 0.0035);
   const expectedSoloWork = definition.workRate * focusBonus * debtPenalty * ERAS[state.techEra].productivity;
   const predictedWorkSeconds = request.remainingWork / Math.max(1, expectedSoloWork);
   const closingBonus = request.remainingWork <= expectedSoloWork * 2 ? 1.75 : request.remainingWork <= expectedSoloWork * 5 ? 1.25 : 1;
-  const groupLimit = request.isFinal ? 5 : secondsToBase < predictedWorkSeconds * 1.2 ? 4 : secondsToBase < predictedWorkSeconds * 2 ? 3 : 2;
+  const groupLimit = bossLike ? 5 : secondsToBase < predictedWorkSeconds * 1.2 ? 4 : secondsToBase < predictedWorkSeconds * 2 ? 3 : 2;
   if (assigned >= groupLimit) return 0;
   const workload = 0.55 + 0.45 * Math.min(1, request.remainingWork / Math.max(1, expectedSoloWork * 5));
   const dispatchLoad = 1 / (1 + assigned * 1);

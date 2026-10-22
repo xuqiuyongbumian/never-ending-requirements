@@ -465,12 +465,12 @@ export class GameApp {
       button.classList.toggle("is-insufficient", insufficient && !locked && !full);
       button.classList.toggle("is-training", Boolean(order));
       button.setAttribute("aria-label", `招聘${engineer.name}，消耗${hireCost}预算`);
-      button.title = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中，还需 ${order.remaining.toFixed(1)} 秒` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(hireCost - state.budget)}` : `${engineer.summary} · 当前招募成本 ${hireCost} · 重复招募同岗位会涨价`;
+      button.title = locked ? `${ERAS[engineer.era].name}解锁` : order ? `招聘中，还需 ${order.remaining.toFixed(1)} 秒` : full ? "团队或招聘队列已满" : insufficient ? `预算不足，还差${Math.ceil(hireCost - state.budget)}` : `${engineer.summary} · 当前招募成本 ${hireCost} · 重复招募同岗位会涨价`;
       const stateLabel = button.querySelector<HTMLElement>("[data-role-state]");
       const costLabel = button.querySelector<HTMLElement>("[data-role-cost]");
       if (costLabel) costLabel.textContent = hireCost.toString();
       const specialties: Record<EngineerId, string> = { intern: "基础支持", frontend: "功能专长", backend: "基础设施", qa: "缺陷专长", agent: "全领域高速" };
-      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : order ? `生产中 ${order.remaining.toFixed(1)}s` : insufficient ? "预算不足" : specialties[engineer.id];
+      if (stateLabel) stateLabel.textContent = locked ? `${ERAS[engineer.era].name}解锁` : order ? `招聘中 ${order.remaining.toFixed(1)}s` : insufficient ? "预算不足" : specialties[engineer.id];
     }
 
     const nextEra = getNextEra(state);

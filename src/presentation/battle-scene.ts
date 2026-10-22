@@ -29,8 +29,11 @@ const FLOOR_Y = 536;
 const STRIDE_PHASE_STEP = 0.61803398875;
 const REQUEST_CARD_WIDTH = 224;
 const REQUEST_CARD_HEIGHT = 72;
+const BOSS_CARD_WIDTH = 300;
+const BOSS_CARD_HEIGHT = 94;
 const REQUEST_CARD_ROW_GAP = 76;
-const REQUEST_CARD_BASE_OFFSET = 112;
+const REQUEST_CARD_BASE_OFFSET = 140;
+const REQUEST_MASCOT_LIFT = 28;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
   bug: "缺陷",
@@ -77,6 +80,7 @@ interface RequestView {
   remaining: Phaser.GameObjects.Text;
   progress: Phaser.GameObjects.Rectangle;
   priorityMark: Phaser.GameObjects.Text;
+  badge?: Phaser.GameObjects.Text;
   id: number;
   requestCode: string;
   accent: number;
@@ -88,6 +92,10 @@ interface RequestView {
   introPlayed: boolean;
   cardX: number;
   cardY: number;
+  cardWidth: number;
+  cardHeight: number;
+  barHeight: number;
+  isBoss: boolean;
   mascotScale: number;
 }
 
@@ -143,7 +151,7 @@ export class BattleScene extends Phaser.Scene {
     this.priorityLink = this.add.graphics().setDepth(2);
     this.drawLane();
     const baseSprite = this.add.image(164, FLOOR_Y, GAME_ASSETS.structures.base.key).setOrigin(0.5, 1).setDepth(3);
-    baseSprite.setScale(148 / baseSprite.height);
+    baseSprite.setScale(250 / baseSprite.height);
     const inboxSprite = this.add.image(1184, FLOOR_Y, GAME_ASSETS.structures.inbox.key).setOrigin(0.5, 1).setDepth(3);
     inboxSprite.setScale(160 / inboxSprite.height);
     for (const [x, y, label] of [
@@ -151,7 +159,7 @@ export class BattleScene extends Phaser.Scene {
       [1184, FLOOR_Y - inboxSprite.displayHeight - 18, "需求入口"]
     ] as const) {
       this.add.text(x, y, label, {
-        fontFamily: "sans-serif", fontSize: "13px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
+        fontFamily: "sans-serif", fontSize: "14px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43", resolution: 2
       }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(2);
     }
     this.lastHudUpdate = 0;
@@ -410,19 +418,20 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private getRequestCardPositions(state: BattleState): Map<number, RequestCardPosition> {
-    const rows: number[][] = [];
+    const rows: Array<Array<{ x: number; width: number }>> = [];
     const positions = new Map<number, RequestCardPosition>();
     const requests = state.requests.map((request) => {
       const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
       const unitX = worldX / WORLD_WIDTH * WIDTH;
-      return { request, x: Math.max(REQUEST_CARD_WIDTH / 2 + 12, Math.min(WIDTH - REQUEST_CARD_WIDTH / 2 - 12, unitX)) };
+      const width = request.isBoss ? BOSS_CARD_WIDTH : REQUEST_CARD_WIDTH;
+      return { request, width, x: Math.max(width / 2 + 12, Math.min(WIDTH - width / 2 - 12, unitX)) };
     }).sort((a, b) => a.x - b.x || a.request.id - b.request.id);
 
-    for (const { request, x } of requests) {
-      let row = rows.findIndex((claimed) => claimed.every((claimedX) => Math.abs(claimedX - x) >= REQUEST_CARD_WIDTH + 16));
+    for (const { request, x, width } of requests) {
+      let row = rows.findIndex((claimed) => claimed.every((claimedItem) => Math.abs(claimedItem.x - x) >= (claimedItem.width + width) / 2 + 16));
       if (row < 0) row = rows.length;
       rows[row] ??= [];
-      rows[row].push(x);
+      rows[row].push({ x, width });
       positions.set(request.id, {
         x,
         y: FLOOR_Y - REQUEST_CARD_BASE_OFFSET - row * REQUEST_CARD_ROW_GAP
@@ -432,23 +441,39 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private createRequestView(request: Requirement): RequestView {
+    const isBoss = request.isBoss === true;
+    const cardWidth = isBoss ? BOSS_CARD_WIDTH : REQUEST_CARD_WIDTH;
+    const cardHeight = isBoss ? BOSS_CARD_HEIGHT : REQUEST_CARD_HEIGHT;
+    const barHeight = isBoss ? 12 : 7;
+    const halfWidth = cardWidth / 2;
+    const innerLeft = -halfWidth + 12;
+    const innerRight = halfWidth - 12;
+    const barY = cardHeight / 2 - 13;
     const plate = this.add.graphics();
     const textureKey = requestTexture(request);
     const connector = this.add.graphics().setDepth(2);
-    const mascot = this.add.image(0, FLOOR_Y, textureKey).setOrigin(0.5, 1).setDepth(5);
-    const mascotScale = Math.min(70 / mascot.width, 70 / mascot.height);
+    const mascot = this.add.image(0, FLOOR_Y - REQUEST_MASCOT_LIFT, textureKey).setOrigin(0.5, 1).setDepth(5);
+    const mascotScale = Math.min((isBoss ? 96 : 70) / mascot.width, (isBoss ? 96 : 70) / mascot.height);
     mascot.setScale(mascotScale);
-    const title = this.add.text(-96, -17, request.title, { fontFamily: "sans-serif", fontSize: "14px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(0, 0.5);
-    const code = this.add.text(-96, 7, `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`, { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: "#b4bbcc" }).setOrigin(0, 0.5);
-    const remaining = this.add.text(96, 7, "", { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: "#f7edd9", fontStyle: "bold" }).setOrigin(1, 0.5);
-    const progress = this.add.rectangle(-96, 27, 0, 7, 0x45aaa0).setOrigin(0, 0.5);
-    const priorityMark = this.add.text(96, -17, "★ 优先", {
-      fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3
+    const title = this.add.text(innerLeft, -17, request.title, { fontFamily: "sans-serif", fontSize: isBoss ? "18px" : "16px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(0, 0.5);
+    const code = this.add.text(innerLeft, 7, `${request.code} · ${REQUEST_KIND_LABEL[request.kind]}`, { fontFamily: "ui-monospace, monospace", fontSize: "13px", color: "#b4bbcc", resolution: 2 }).setOrigin(0, 0.5);
+    const remaining = this.add.text(innerRight, 7, "", { fontFamily: "ui-monospace, monospace", fontSize: "13px", color: "#f7edd9", fontStyle: "bold", resolution: 2 }).setOrigin(1, 0.5);
+    const progress = this.add.rectangle(innerLeft, barY, 0, barHeight, 0x45aaa0).setOrigin(0, 0.5);
+    const priorityMark = this.add.text(innerRight, -17, "★ 优先", {
+      fontFamily: "sans-serif", fontSize: "12px", fontStyle: "bold", color: "#ffcf83", stroke: "#20243a", strokeThickness: 3, resolution: 2
     }).setOrigin(1, 0.5).setVisible(false);
-    const container = this.add.container(0, 0, [plate, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 6 : 5);
-    const accent = request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;
+    const badge = isBoss
+      ? this.add.text(-halfWidth + 10, -cardHeight / 2 + 11, "BOSS", {
+        fontFamily: "sans-serif", fontSize: "11px", fontStyle: "bold", color: "#fff1f1",
+        backgroundColor: "#c0392b", resolution: 2
+      }).setOrigin(0, 0.5).setPadding(6, 3, 6, 3)
+      : undefined;
+    const container = this.add.container(0, 0, badge
+      ? [plate, title, code, remaining, progress, badge, priorityMark]
+      : [plate, title, code, remaining, progress, priorityMark]).setDepth(request.isFinal ? 6 : 5);
+    const accent = isBoss ? 0xff5a4d : request.isFinal ? 0xefbd59 : request.kind === "bug" ? 0xe57175 : request.kind === "infra" ? 0x679cc6 : 0x45aaa0;
     progress.setFillStyle(accent);
-    plate.setInteractive(new Phaser.Geom.Rectangle(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT), Phaser.Geom.Rectangle.Contains);
+    plate.setInteractive(new Phaser.Geom.Rectangle(-halfWidth, -cardHeight / 2, cardWidth, cardHeight), Phaser.Geom.Rectangle.Contains);
     plate.on("pointerdown", (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
       event.stopPropagation();
       if (!this.state) return;
@@ -457,7 +482,7 @@ export class BattleScene extends Phaser.Scene {
       updateHud?.(this.state);
     });
     const view: RequestView = {
-      container, mascot, connector, plate, title, code, remaining, progress, priorityMark,
+      container, mascot, connector, plate, title, code, remaining, progress, priorityMark, badge,
       id: request.id,
       requestCode: request.code,
       accent,
@@ -469,6 +494,10 @@ export class BattleScene extends Phaser.Scene {
       introPlayed: false,
       cardX: Number.NaN,
       cardY: Number.NaN,
+      cardWidth,
+      cardHeight,
+      barHeight,
+      isBoss,
       mascotScale
     };
     this.drawRequestPlate(view, request.isFinal, false);
@@ -479,18 +508,23 @@ export class BattleScene extends Phaser.Scene {
     const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
     const unitX = worldX / WORLD_WIDTH * WIDTH;
     const prioritized = state.prioritizedRequestId === request.id;
+    const mascotY = FLOOR_Y - REQUEST_MASCOT_LIFT;
     if (view.mascot.x !== unitX) view.mascot.setX(unitX);
-    if (view.mascot.y !== FLOOR_Y) view.mascot.setY(FLOOR_Y);
+    if (view.mascot.y !== mascotY) view.mascot.setY(mascotY);
     if (view.cardX !== cardPosition.x || view.cardY !== cardPosition.y) {
       view.cardX = cardPosition.x;
       view.cardY = cardPosition.y;
       view.container.setPosition(cardPosition.x, cardPosition.y);
     }
     view.connector.clear();
-    view.connector.lineStyle(2, prioritized ? 0xffc875 : view.accent, prioritized ? 0.62 : 0.42)
-      .lineBetween(cardPosition.x, cardPosition.y + REQUEST_CARD_HEIGHT / 2, unitX, FLOOR_Y - view.mascot.displayHeight + 4);
-    const depth = prioritized ? 7 : request.isFinal ? 6 : 5;
+    view.connector.lineStyle(view.isBoss ? 3 : 2, prioritized ? 0xffc875 : view.accent, prioritized ? 0.62 : 0.42)
+      .lineBetween(cardPosition.x, cardPosition.y + view.cardHeight / 2, unitX, view.mascot.y - view.mascot.displayHeight + 4);
+    const depth = prioritized ? 7 : request.isFinal ? 6 : view.isBoss ? 6 : 5;
     if (view.container.depth !== depth) view.container.setDepth(depth);
+    if (view.isBoss && !view.introPlayed) {
+      view.introPlayed = true;
+      this.cameras.main.shake(320, 0.008);
+    }
     if (request.isFinal && !view.introPlayed) {
       view.introPlayed = true;
       view.container.setScale(0.82).setAlpha(0);
@@ -512,22 +546,29 @@ export class BattleScene extends Phaser.Scene {
       view.lastPrioritized = prioritized;
       this.drawRequestPlate(view, request.isFinal, prioritized);
     }
-    const progressWidth = Math.max(0, Math.round((REQUEST_CARD_WIDTH - 32) * (1 - request.remainingWork / request.totalWork) * 100) / 100);
+    const progressWidth = Math.max(0, Math.round((view.cardWidth - 32) * (1 - request.remainingWork / request.totalWork) * 100) / 100);
     if (view.progressWidth !== progressWidth) {
       view.progressWidth = progressWidth;
-      view.progress.setSize(progressWidth, 7);
+      view.progress.setSize(progressWidth, view.barHeight);
     }
   }
 
   private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean): void {
     const { plate, accent } = view;
+    const width = view.cardWidth;
+    const height = view.cardHeight;
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
     plate.clear();
-    if (isFinal) plate.fillStyle(0xffd27d, 0.1).fillRoundedRect(-REQUEST_CARD_WIDTH / 2 - 4, -REQUEST_CARD_HEIGHT / 2 - 4, REQUEST_CARD_WIDTH + 8, REQUEST_CARD_HEIGHT + 8, 11);
-    plate.fillStyle(0x191c31, 0.94).fillRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT, 9);
-    plate.fillStyle(0x282b43, 0.98).fillRoundedRect(-REQUEST_CARD_WIDTH / 2 + 1, -REQUEST_CARD_HEIGHT / 2 + 1, REQUEST_CARD_WIDTH - 2, REQUEST_CARD_HEIGHT - 2, 8);
-    plate.fillStyle(accent).fillRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, 5, 3);
-    plate.lineStyle(prioritized || isFinal ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal ? 0.9 : 0.6).strokeRoundedRect(-REQUEST_CARD_WIDTH / 2, -REQUEST_CARD_HEIGHT / 2, REQUEST_CARD_WIDTH, REQUEST_CARD_HEIGHT, 9);
-    plate.fillStyle(0x555a73).fillRoundedRect(-96, 23, REQUEST_CARD_WIDTH - 32, 8, 4);
+    if (isFinal || view.isBoss) {
+      plate.fillStyle(view.isBoss ? 0xff5a4d : 0xffd27d, view.isBoss ? 0.16 : 0.1)
+        .fillRoundedRect(-halfWidth - 4, -halfHeight - 4, width + 8, height + 8, 11);
+    }
+    plate.fillStyle(0x191c31, 0.94).fillRoundedRect(-halfWidth, -halfHeight, width, height, 9);
+    plate.fillStyle(0x282b43, 0.98).fillRoundedRect(-halfWidth + 1, -halfHeight + 1, width - 2, height - 2, 8);
+    plate.fillStyle(accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
+    plate.lineStyle(prioritized || isFinal || view.isBoss ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal || view.isBoss ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
+    plate.fillStyle(0x555a73).fillRoundedRect(-halfWidth + 12, halfHeight - 13, width - 24, view.barHeight + 1, 4);
   }
 
   private syncPriorityLink(state: BattleState): void {
@@ -547,8 +588,8 @@ export class BattleScene extends Phaser.Scene {
       const formation = formationOffset(engineer.lane);
       const engineerX = worldX / WORLD_WIDTH * WIDTH;
       this.priorityLink.lineStyle(2, 0xffc875, engineer.action === "working" ? 0.6 : 0.34)
-        .lineBetween(requestView.mascot.x, FLOOR_Y - 48, engineerX, FLOOR_Y + formation.y - 96);
-      this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.mascot.x, FLOOR_Y - 48, 3);
+        .lineBetween(requestView.mascot.x, requestView.mascot.y - 48, engineerX, FLOOR_Y + formation.y - 96);
+      this.priorityLink.fillStyle(0xffd38a, 0.8).fillCircle(requestView.mascot.x, requestView.mascot.y - 48, 3);
     }
   }
 
@@ -603,5 +644,5 @@ export class BattleScene extends Phaser.Scene {
 function formationOffset(lane: number): { y: number } {
   const depthLane = (lane % 5) - 2;
   const formationRow = Math.floor(lane / 5) % 4;
-  return { y: depthLane * 6 + formationRow * 4 };
+  return { y: -Math.abs(depthLane) * 12 - formationRow * 8 };
 }
