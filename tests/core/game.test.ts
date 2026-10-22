@@ -17,6 +17,7 @@ import {
   hireEngineer,
   MAX_PROJECT_HEALTH,
   MAX_TRAINING_QUEUE,
+  PASSIVE_BUDGET_PER_SECOND,
   prioritizeRequirement,
   SHIP_IT_COOLDOWN,
   SHIP_IT_DEBT_COST,
@@ -329,7 +330,7 @@ test("rejects unaffordable and era-locked hires without spending budget", () => 
 test("trains a hired engineer and enforces queue/population limits", () => {
   const state = createBattle();
   assert.equal(hireEngineer(state, "frontend"), true);
-  assert.equal(state.budget, 90);
+  assert.equal(state.budget, 55);
   tick(state, 3);
   assert.equal(state.engineers.length, 2);
   assert.equal(state.engineers[1].role, "frontend");
@@ -368,7 +369,7 @@ test("automatically processes a requirement and awards budget and technical expe
   advanceBattle(state, 1 / 30);
 
   assert.equal(state.requests.some((item) => item.id === request.id), false);
-  assert.equal(state.budget, startingBudget + request.budgetReward + 0.05);
+  assert.equal(state.budget, startingBudget + request.budgetReward + PASSIVE_BUDGET_PER_SECOND / 30);
   assert.equal(state.experience, request.experienceReward);
   assert.ok(state.telemetry.some((event) => event.type === "request_complete"));
 });
@@ -419,7 +420,7 @@ test("change-event choices apply real effects and emit behavior events", () => {
   state.pendingEvent = CHANGE_EVENTS.find((event) => event.id === "scope-creep")!;
   const budget = state.budget;
   assert.equal(chooseChange(state, "accept-scope"), true);
-  assert.equal(state.budget, budget + 70);
+  assert.equal(state.budget, budget + 45);
   assert.equal(state.experience, 18);
   assert.equal(state.techDebt, 24);
   assert.equal(state.requests.length, 1);
@@ -677,6 +678,7 @@ test("finishes the final GO-LIVE request just before the deadline", () => {
   const state = createBattle();
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   state.elapsed = 299.98;
   state.engineers[0].x = 470;
@@ -688,10 +690,44 @@ test("finishes the final GO-LIVE request just before the deadline", () => {
   assert.ok(state.telemetry.some((event) => event.type === "rush_completed" && event.detail.interrupted === true));
 });
 
+test("spawns the boss request once at the mid-game beat", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  state.elapsed = 149.9;
+  advanceBattle(state, 0.5);
+
+  const bosses = state.requests.filter((request) => request.isBoss === true);
+  assert.equal(bosses.length, 1);
+  assert.equal(bosses[0].code, "BOSS-01");
+  assert.equal(bosses[0].totalWork, 900);
+
+  advanceBattle(state, 10);
+  assert.equal(state.requests.filter((request) => request.isBoss === true).length, 1, "boss must not respawn");
+  assert.ok(state.telemetry.some((event) => event.type === "boss_spawn"));
+});
+
+test("a missed boss request costs 45 health without ending the battle", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  addRequest(state, { code: "BOSS-01", isBoss: true, x: BASE_FRONT_EDGE - 1, speed: 10, totalWork: 900, remainingWork: 900, severity: 45 });
+
+  advanceBattle(state, 1 / 30);
+
+  assert.equal(state.projectHealth, MAX_PROJECT_HEALTH - 45);
+  assert.equal(state.phase, "running");
+  assert.ok(state.telemetry.some((event) => event.type === "request_missed" && event.detail.boss === true));
+});
+
 test("ends in defeat at the five-minute deadline when GO-LIVE remains incomplete", () => {
   const state = createBattle();
   state.requestScheduleIndex = 12;
   state.eventScheduleIndex = 6;
+  state.bossSpawned = true;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   state.elapsed = 299.98;
   addRequest(state, { code: "GO-LIVE", title: "1024 极限上线", kind: "launch", x: 900, isFinal: true, totalWork: 880, remainingWork: 880 });
