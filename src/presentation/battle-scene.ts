@@ -17,6 +17,8 @@ import {
   GAME_TEXTURES,
   requestTexture
 } from "./game-assets";
+import type { AudioEngine } from "../audio/audio-engine";
+import { panFromX } from "../audio/music-plan";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -73,6 +75,7 @@ export class BattleScene extends Phaser.Scene {
   private presentEngineerIds = new Set<number>();
   private presentRequestIds = new Set<number>();
   private priorityLinkActive = false;
+  private audio: AudioEngine | null = null;
 
   constructor() {
     super({ key: "battle", active: false });
@@ -91,6 +94,7 @@ export class BattleScene extends Phaser.Scene {
 
   create(data: { state?: BattleState } = {}): void {
     this.state = data.state ?? this.game.registry.get("battleState") ?? null;
+    this.audio = (this.game.registry.get("audio") as AudioEngine | undefined) ?? null;
     this.engineers.clear();
     this.requests.clear();
     this.presentEngineerIds.clear();
@@ -272,6 +276,10 @@ export class BattleScene extends Phaser.Scene {
       if (!view) {
         view = this.createRequestView(request);
         this.requests.set(request.id, view);
+        this.audio?.playCue("request_in", {
+          pan: panFromX(request.x / WORLD_WIDTH * WIDTH, 0, WIDTH, 0.6),
+          gain: request.isFinal ? 1 : 0.75
+        });
       }
       this.updateRequestView(view, request, state);
     }

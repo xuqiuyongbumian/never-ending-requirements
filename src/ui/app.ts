@@ -23,6 +23,9 @@ import {
   type EngineerId
 } from "../core/game";
 import { GAME_ASSETS } from "../presentation/game-assets";
+import { AudioEngine } from "../audio/audio-engine";
+import { withAudioPatch } from "../audio/audio-settings";
+import { audioPanelMarkup, bindAudioPanel, syncAudioPanel } from "./audio-panel";
 import { summarizeRun, TelemetryReporter } from "./telemetry";
 
 type CreateGame = (updateHud: (state: BattleState) => void) => Promise<Phaser.Game>;
@@ -33,6 +36,7 @@ export class GameApp {
   private visibilityPaused = false;
   private telemetryCursor = 0;
   private readonly telemetry = new TelemetryReporter();
+  private readonly audio = new AudioEngine();
 
   constructor(private readonly root: HTMLElement, private readonly createGame: CreateGame) {
     document.documentElement.style.setProperty("--studio-background", `url("${GAME_ASSETS.backgrounds[0].src}")`);
@@ -47,6 +51,9 @@ export class GameApp {
     this.game?.registry.remove("battleState");
     this.state = null;
     this.visibilityPaused = false;
+    // The score keeps running across menu switches; only its layers calm down.
+    this.audio.setMusicMood({ rush: false, incident: false, urgent: false });
+    this.audio.setDuck(1);
     this.root.innerHTML = `
       <section class="menu-screen">
         <div class="menu-grid" aria-hidden="true"></div>
@@ -75,6 +82,8 @@ export class GameApp {
   }
 
   private async startBattle(replay = false): Promise<void> {
+    // Browsers only allow audio to start inside a gesture, so unlock first.
+    await this.audio.unlock();
     this.telemetry.beginRun();
     if (replay) this.telemetry.track("replay", {});
     const state = createBattle(Date.now() >>> 0);
@@ -94,7 +103,9 @@ export class GameApp {
       }
     }
     this.game.registry.set("battleState", state);
+    this.game.registry.set("audio", this.audio);
     this.game.scene.start("battle", { state });
+    this.audio.startMusic(state.techEra);
     this.renderBattleHud();
     this.updateHud(state);
   }
@@ -123,6 +134,7 @@ export class GameApp {
               <span class="status-track debt-track"><i data-debt-bar></i></span>
               <small class="debt-warning" data-debt-warning role="status" aria-live="polite" hidden>线上事故风险升高</small>
             </div>
+            ${audioPanelMarkup(this.audio.settings)}
             <button class="icon-button" id="pause-game" aria-label="暂停">Ⅱ</button>
           </div>
         </header>
@@ -193,11 +205,19 @@ export class GameApp {
     this.root.querySelector("#replay-battle")?.addEventListener("click", () => this.startBattle(true));
     this.root.querySelector("#export-analytics")?.addEventListener("click", () => this.telemetry.exportCurrentRun());
     this.root.querySelector("#result-home")?.addEventListener("click", () => this.showMenu());
+    bindAudioPanel(this.root, () => this.audio.settings, {
+      onChange: (patch) => {
+        this.audio.setSettings(withAudioPatch(this.audio.settings, patch));
+        syncAudioPanel(this.root, this.audio.settings);
+      },
+      onPreview: () => this.audio.playCue("ui_tick")
+    });
   }
 
   private hire(role: EngineerId): void {
     if (!this.state) return;
     const hired = hireEngineer(this.state, role);
+    if (!hired) this.audio.playCue("denied", { gain: 0.55 });
     if (hired && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       const card = this.root.querySelector<HTMLButtonElement>(`[data-role="${role}"]`);
       card?.animate(
@@ -214,13 +234,13 @@ export class GameApp {
 
   private advanceEra(): void {
     if (!this.state) return;
-    upgradeEra(this.state);
+    if (!upgradeEra(this.state)) this.audio.playCue("denied", { gain: 0.55 });
     this.updateHud(this.state);
   }
 
   private useShipIt(): void {
     if (!this.state) return;
-    activateShipIt(this.state);
+    if (!activateShipIt(this.state)) this.audio.playCue("denied", { gain: 0.55 });
     this.updateHud(this.state);
   }
 
@@ -228,9 +248,16 @@ export class GameApp {
     if (!this.state || this.state.phase !== "running") return;
     this.state.paused = !this.state.paused;
     this.syncPauseButton();
+    this.audio.update(this.state);
   }
 
   private handleVisibilityChange(): void {
+    if (document.hidden) {
+      // Suspend before touching state so the score never plays to a hidden tab.
+      this.audio.suspend();
+    } else {
+      this.audio.resume();
+    }
     if (!this.state || this.state.phase !== "running") return;
     if (document.hidden && !this.state.paused) {
       this.visibilityPaused = true;
@@ -260,7 +287,12 @@ export class GameApp {
   }
 
   private handleKeydown(event: KeyboardEvent): void {
-    if (!this.state || this.state.phase !== "running" || event.repeat) return;
+    if (event.repeat) return;
+    if (event.key.toLowerCase() === "m") {
+      this.toggleMute();
+      return;
+    }
+    if (!this.state || this.state.phase !== "running") return;
     if (event.code === "Space") {
       event.preventDefault();
       this.togglePause();
@@ -279,8 +311,15 @@ export class GameApp {
     if (role) this.hire(role.id);
   }
 
+  private toggleMute(): void {
+    this.audio.setSettings(withAudioPatch(this.audio.settings, { muted: !this.audio.settings.muted }));
+    syncAudioPanel(this.root, this.audio.settings);
+    if (!this.audio.settings.muted) this.audio.playCue("ui_tick");
+  }
+
   private updateHud(state: BattleState): void {
     if (!this.root.querySelector(".battle-ui")) return;
+    this.audio.update(state);
     this.consumeTelemetry(state);
     const timeLeft = Math.max(0, Math.ceil(ROUND_DURATION - state.elapsed));
     this.setText("[data-time]", `${String(Math.floor(timeLeft / 60)).padStart(2, "0")}:${String(timeLeft % 60).padStart(2, "0")}`);
@@ -430,8 +469,10 @@ export class GameApp {
 
   private consumeTelemetry(state: BattleState): void {
     if (this.telemetryCursor >= state.telemetry.length) return;
-    this.telemetry.consume(state.telemetry.slice(this.telemetryCursor));
+    const fresh = state.telemetry.slice(this.telemetryCursor);
     this.telemetryCursor = state.telemetry.length;
+    this.telemetry.consume(fresh);
+    this.audio.handleTelemetry(fresh);
   }
 
   private updateBar(selector: string, amount: number): void {
