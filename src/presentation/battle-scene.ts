@@ -56,10 +56,8 @@ const ACTIVITY_LABEL: Record<Engineer["role"], string> = {
 const BUBBLE_WIDTH = 96;
 const BUBBLE_HEIGHT = 52;
 /** Distance from the bubble centre down to the tail tip. */
-// ?assets=local keeps the game fully offline: sprite sheets come from the build.
-const USE_CDN_SPRITE_SHEETS = typeof location === "undefined"
-  ? true
-  : !/[?&]assets=local\b/.test(location.search);
+// Use the reviewed local atlases by default; ?assets=cdn opts into hosted copies.
+const USE_CDN_SPRITE_SHEETS = typeof location !== "undefined" && /[?&]assets=cdn\b/.test(location.search);
 
 const BUBBLE_TAIL_DROP = 12;
 const BUBBLE_HEAD_GAP = 6;

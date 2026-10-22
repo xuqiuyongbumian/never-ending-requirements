@@ -10,7 +10,9 @@ Runtime sheets live in `public/assets/game/animations/`. They are transparent RG
 | Tester | `source/tester-mixed-candidate.png` + `source/tester-work-candidate.png` | 4 / 6 | 8 / 7.1 | 8 / 8 |
 | AI Agent | `source/supplied-agent-sheet.png` | 6 / 7 | 8 / 8.8 | 6 / 10 |
 
-Rows start at frame 0 (Idle), 8 (Run), and 16 (Work). Unused cells are transparent, never duplicate frames. Frontend uses seven Run cells because the eighth candidate is a standing pose that causes a visible hitch at the loop boundary. The v3 Frontend and Tester sheets were excluded because they reuse the Intern-like character design; the generated alternatives are based on the project’s supplied individual Frontend and Tester illustrations. Small disconnected row-edge fragments in generated Frontend and Tester sheets are removed by `scripts/prepare-engineer-sprite-sheets.py`; source art remains unchanged here for review.
+Rows start at frame 0 (Idle), 8 (Run), and 16 (Work). Unused cells are transparent, never duplicate frames. Frontend uses seven Run cells because the eighth candidate is a standing pose that causes a visible hitch at the loop boundary. The v3 Frontend and Tester sheets were excluded because they reuse the Intern-like character design; the generated alternatives are based on the project’s supplied individual Frontend and Tester illustrations.
+
+Some source poses overrun their nominal grid cells. The preparation script groups transparent-image components by the nearest pose, restores pixels that cross a cell boundary, and separates oversized components where adjacent poses touch. It applies one scale per role, validates clear cell padding, and does not erase fixed strips from a pose. The source art remains unchanged here for review. The game uses these rebuilt local sheets by default; `?assets=cdn` opts into hosted copies.
 
 The three supplied sheets needed to rebuild the runtime files are kept individually under `source/`; the full source archive was removed from Git history. Rebuild the normalized runtime sheets with Python 3 and Pillow:
 
