@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
+  getEngineerDefinition,
   getInterpolatedWorldX,
   prioritizeRequirement,
   SHIP_IT_WORK_BONUS,
@@ -14,6 +15,7 @@ import {
   ENGINEER_ANIMATION_SHEETS,
   ENGINEER_SPRITE_SHEETS,
   engineerAnimationKey,
+  runAnimationFrameOffset,
   GAME_ASSETS,
   GAME_TEXTURES,
   requestTexture
@@ -41,6 +43,7 @@ interface EngineerView {
   activity: Phaser.GameObjects.Text;
   motionAction: Engineer["action"] | null;
   motionPhaseInitialized: boolean;
+  motionFrameIndex: number;
   lastWorldX: number | null;
   facingLeft: boolean;
   motionPaused: boolean;
@@ -117,11 +120,18 @@ export class BattleScene extends Phaser.Scene {
     const background = GAME_ASSETS.backgrounds[era] ?? GAME_ASSETS.backgrounds[0];
     this.background = this.add.image(WIDTH / 2, HEIGHT / 2, background.key).setDepth(0);
     this.background.setScale(Math.max(WIDTH / this.background.width, HEIGHT / this.background.height));
+    const developmentCenter = this.add.image(164, FLOOR_Y, GAME_ASSETS.props.developmentCenter.key).setOrigin(0.5, 1).setDepth(3);
+    developmentCenter.setScale(148 / developmentCenter.height);
+    const requestPortal = this.add.image(1184, FLOOR_Y, GAME_ASSETS.props.requestPortal.key).setOrigin(0.5, 1).setDepth(3);
+    requestPortal.setScale(160 / requestPortal.height);
     this.lane = this.add.graphics().setDepth(1);
     this.priorityLink = this.add.graphics().setDepth(2);
     this.drawLane();
-    for (const [x, label] of [[160, "研发中心"], [1120, "需求入口"]] as const) {
-      this.add.text(x, FLOOR_Y - 18, label, {
+    for (const [x, y, label] of [
+      [164, FLOOR_Y - developmentCenter.displayHeight - 18, "研发中心"],
+      [1184, FLOOR_Y - requestPortal.displayHeight - 18, "需求入口"]
+    ] as const) {
+      this.add.text(x, y, label, {
         fontFamily: "sans-serif", fontSize: "13px", fontStyle: "bold", color: "#fff4dc", backgroundColor: "#282b43"
       }).setOrigin(0.5).setPadding(7, 4, 7, 4).setDepth(2);
     }
@@ -208,6 +218,7 @@ export class BattleScene extends Phaser.Scene {
           }).setOrigin(0.5).setDepth(6).setVisible(false),
           motionAction: null,
           motionPhaseInitialized: false,
+          motionFrameIndex: -1,
           lastWorldX: null,
           facingLeft: false,
           motionPaused: false,
@@ -238,7 +249,7 @@ export class BattleScene extends Phaser.Scene {
     const workRushScale = state.elapsed < state.rushUntil
       ? 1.55
       : state.elapsed < state.shipItUntil ? 1 + SHIP_IT_WORK_BONUS : 1;
-    this.playEngineerMotion(view, engineer.id, engineer.role, engineer.action, state.paused || state.pendingEvent !== null, state.speed, workRushScale);
+    this.playEngineerMotion(view, engineer.id, engineer.runDistance, engineer.role, engineer.action, state.paused || state.pendingEvent !== null, state.speed, workRushScale);
     const hover = engineer.role === "agent" ? Math.sin(state.elapsed * 4 + engineer.id) * 3 : 0;
     const spriteY = FLOOR_Y + formation.y + hover;
     if (view.sprite.x !== x || view.sprite.y !== spriteY) view.sprite.setPosition(x, spriteY);
@@ -268,6 +279,7 @@ export class BattleScene extends Phaser.Scene {
   private playEngineerMotion(
     view: EngineerView,
     engineerId: number,
+    runDistance: number,
     role: Engineer["role"],
     action: Engineer["action"],
     paused: boolean,
@@ -275,16 +287,35 @@ export class BattleScene extends Phaser.Scene {
     workRushScale: number
   ): void {
     if (view.motionAction !== action) {
-      view.sprite.play(engineerAnimationKey(role, action));
-      // Offset each actor's stride whenever they start moving so a team does
-      // not snap into the same pose in lockstep. Keep the first idle loop
-      // desynchronized too, while action transitions remain deterministic.
-      if (action === "moving" || !view.motionPhaseInitialized) {
-        view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
+      if (action === "moving") {
+        view.sprite.anims.stop();
+      } else {
+        view.sprite.play(engineerAnimationKey(role, action));
+        if (!view.motionPhaseInitialized) {
+          view.sprite.anims.setProgress((engineerId * STRIDE_PHASE_STEP) % 1);
+        }
       }
       view.motionPhaseInitialized = true;
       view.motionAction = action;
+      view.motionFrameIndex = -1;
       view.motionTimeScale = -1;
+      view.motionPaused = !paused;
+    }
+    if (action === "moving") {
+      const definition = ENGINEER_ANIMATIONS[role].moving;
+      const phase = engineerId * STRIDE_PHASE_STEP * definition.frameCount;
+      const frameIndex = definition.start + runAnimationFrameOffset(
+        definition,
+        runDistance,
+        getEngineerDefinition(role).moveSpeed,
+        phase
+      );
+      if (frameIndex !== view.motionFrameIndex && (!paused || view.motionFrameIndex < 0)) {
+        view.sprite.setFrame(frameIndex);
+        view.motionFrameIndex = frameIndex;
+      }
+      view.motionPaused = paused;
+      return;
     }
     // Ship It and other rush effects boost work, not travel speed.
     const actionScale = action === "working" ? workRushScale : 1;

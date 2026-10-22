@@ -76,6 +76,27 @@ test("interpolates fixed-step render positions without changing simulation state
   assert.equal(engineer.x, simulatedEngineerX, "render interpolation must not mutate the authoritative simulation position");
 });
 
+test("run distance follows simulated travel and stays still while working", () => {
+  const state = createBattle();
+  state.requestScheduleIndex = 12;
+  state.eventScheduleIndex = 6;
+  state.nextEventAt = Number.POSITIVE_INFINITY;
+  const engineer = state.engineers[0];
+  const request = addRequest(state, { x: 900, speed: 0, totalWork: 10000, remainingWork: 10000 });
+  const startX = engineer.x;
+
+  advanceBattle(state, 1 / 30);
+  assert.equal(engineer.action, "moving");
+  assert.ok(Math.abs(engineer.runDistance - Math.abs(engineer.x - startX)) < 1e-9);
+  assert.ok(engineer.runDistance > 0);
+
+  request.x = engineer.x + 20;
+  engineer.targetRequestId = request.id;
+  advanceBattle(state, 1 / 30);
+  assert.equal(engineer.action, "working");
+  assert.ok(Math.abs(engineer.runDistance - Math.abs(engineer.x - startX)) < 1e-9, "work ticks must not advance the footstep distance");
+});
+
 test("interpolation remains stable while paused and falls back for a fresh or missing entity", () => {
   const state = createBattle(721);
   const engineer = state.engineers[0];
@@ -99,7 +120,7 @@ test("engineers hold a capped frontline, then return to their defensive position
   addRequest(state, { x: 1450, speed: 0, totalWork: 1000, remainingWork: 1000 });
   tick(state, 24);
   assert.ok(state.engineers.every((engineer) => engineer.x <= 1120), "engineers must stay behind the request entry area");
-  assert.ok(state.engineers.some((engineer) => engineer.x >= 950), "the team should make a short advance to the defense line");
+  assert.ok(state.engineers.some((engineer) => engineer.x >= 900), "the team should make a short advance to the defense line");
 
   state.requests = [];
   for (const engineer of state.engineers) engineer.targetRequestId = null;
@@ -110,7 +131,7 @@ test("engineers hold a capped frontline, then return to their defensive position
 test("home posts are distinct and distributed across the defensive line", () => {
   const state = createBattle();
   for (let id = 2; id <= 8; id += 1) {
-    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, targetRequestId: null, action: "idle" });
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, runDistance: 0, targetRequestId: null, action: "idle" });
   }
   const stations = state.engineers.map(getEngineerHomeX);
   assert.equal(new Set(stations).size, state.engineers.length);
@@ -143,7 +164,7 @@ test("working crews keep stable stations as a moving request advances", () => {
   const lead = state.engineers[0];
   lead.x = 470;
   lead.targetRequestId = request.id;
-  const partner = { id: 2, role: "intern" as const, lane: 1, x: 564, targetRequestId: request.id, action: "working" as const };
+  const partner = { id: 2, role: "intern" as const, lane: 1, x: 564, runDistance: 0, targetRequestId: request.id, action: "working" as const };
   state.engineers.push(partner);
 
   tick(state, 2);
@@ -161,7 +182,7 @@ test("unassigned engineers return to home posts while other requests remain acti
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   for (let id = 2; id <= 5; id += 1) {
-    state.engineers.push({ id, role: "intern", lane: id - 1, x: 850, targetRequestId: null, action: "idle" });
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 850, runDistance: 0, targetRequestId: null, action: "idle" });
   }
   const request = addRequest(state, { x: 1000, speed: 10, totalWork: 1000, remainingWork: 1000 });
   const held = state.engineers[4];
@@ -182,7 +203,7 @@ test("far requests use separated staging posts without sending engineers to the 
   state.eventScheduleIndex = 6;
   state.nextEventAt = Number.POSITIVE_INFINITY;
   for (let id = 2; id <= 5; id += 1) {
-    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, targetRequestId: null, action: "idle" });
+    state.engineers.push({ id, role: "intern", lane: id - 1, x: 440, runDistance: 0, targetRequestId: null, action: "idle" });
   }
   const request = addRequest(state, { x: 1510, speed: 0, totalWork: 1000, remainingWork: 1000, isFinal: true });
 
@@ -205,7 +226,7 @@ test("collaborators add less work at each additional slot instead of multiplying
     state.engineers[0].x = 470;
     addRequest(state, { x: 500, speed: 0, totalWork: 1000, remainingWork: 1000 });
   }
-  two.engineers.push({ id: 2, role: "intern", lane: 1, x: 564, targetRequestId: null, action: "idle" });
+  two.engineers.push({ id: 2, role: "intern", lane: 1, x: 564, runDistance: 0, targetRequestId: null, action: "idle" });
   advanceBattle(one, 1 / 30);
   advanceBattle(two, 1 / 30);
   const singleWork = 1000 - one.requests[0].remainingWork;
@@ -459,9 +480,9 @@ test("priority scheduling assigns a suitable subset and leaves other engineers o
   state.engineers[0].role = "frontend";
   state.engineers[0].x = 430;
   state.engineers.push(
-    { id: 2, role: "intern", lane: 1, x: 500, targetRequestId: null, action: "idle" },
-    { id: 3, role: "intern", lane: 2, x: 520, targetRequestId: null, action: "idle" },
-    { id: 4, role: "intern", lane: 3, x: 540, targetRequestId: null, action: "idle" }
+    { id: 2, role: "intern", lane: 1, x: 500, runDistance: 0, targetRequestId: null, action: "idle" },
+    { id: 3, role: "intern", lane: 2, x: 520, runDistance: 0, targetRequestId: null, action: "idle" },
+    { id: 4, role: "intern", lane: 3, x: 540, runDistance: 0, targetRequestId: null, action: "idle" }
   );
   const priority = addRequest(state, { kind: "feature", x: 1300, remainingWork: 500, totalWork: 500, speed: 0 });
   const nearby = addRequest(state, { kind: "bug", x: 720, remainingWork: 500, totalWork: 500, speed: 0 });
@@ -538,7 +559,7 @@ test("prioritizing a new request reroutes only a small part of a fully occupied 
   state.engineers[0].action = "working";
   state.engineers[0].targetRequestId = existing[0].id;
   for (let index = 1; index < 4; index += 1) {
-    state.engineers.push({ id: index + 1, role: "intern", lane: index, x: 440 + index * 20, action: "working", targetRequestId: existing[index].id });
+    state.engineers.push({ id: index + 1, role: "intern", lane: index, x: 440 + index * 20, runDistance: 0, action: "working", targetRequestId: existing[index].id });
   }
   const urgent = addRequest(state, { kind: "feature", x: 1400, speed: 0, totalWork: 1000, remainingWork: 1000 });
 

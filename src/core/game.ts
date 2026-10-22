@@ -59,6 +59,7 @@ export interface Engineer {
   role: EngineerId;
   lane: number;
   x: number;
+  runDistance: number;
   targetRequestId: number | null;
   action: "idle" | "moving" | "working";
 }
@@ -250,7 +251,7 @@ export function createBattle(seed = 1024): BattleState {
     techDebt: 0,
     projectHealth: MAX_PROJECT_HEALTH,
     techEra: 0,
-    engineers: [{ id: 1, role: "intern", lane: 0, x: ENGINEER_SPAWN_X, targetRequestId: null, action: "idle" }],
+    engineers: [{ id: 1, role: "intern", lane: 0, x: ENGINEER_SPAWN_X, runDistance: 0, targetRequestId: null, action: "idle" }],
     requests: [],
     queue: [],
     nextEngineerId: 2,
@@ -579,7 +580,7 @@ function advanceHiring(state: BattleState, delta: number): void {
   const definition = getEngineerDefinition(order.role);
   const lane = state.nextEngineerId - 1;
   state.queue.shift();
-  state.engineers.push({ id: state.nextEngineerId++, role: definition.id, lane, x: ENGINEER_SPAWN_X, targetRequestId: null, action: "idle" });
+  state.engineers.push({ id: state.nextEngineerId++, role: definition.id, lane, x: ENGINEER_SPAWN_X, runDistance: 0, targetRequestId: null, action: "idle" });
   setNotice(state, `${definition.name}到岗`);
 }
 
@@ -626,7 +627,9 @@ function updateEngineers(state: BattleState, delta: number): void {
       setEngineerTarget(engineer, null);
       const homeX = getEngineerHomeX(engineer);
       if (Math.abs(engineer.x - homeX) > MOVE_ARRIVAL_EPSILON) {
-        engineer.x += Math.sign(homeX - engineer.x) * Math.min(getEngineerDefinition(engineer.role).moveSpeed * delta, Math.abs(homeX - engineer.x));
+        const distance = Math.min(getEngineerDefinition(engineer.role).moveSpeed * delta, Math.abs(homeX - engineer.x));
+        engineer.x += Math.sign(homeX - engineer.x) * distance;
+        engineer.runDistance += distance;
         engineer.action = "moving";
       } else {
         engineer.x = homeX;
@@ -644,7 +647,9 @@ function updateEngineers(state: BattleState, delta: number): void {
     const destinationX = getEngineerDestinationX(state, engineer, request, slot);
     if (Math.abs(destinationX - engineer.x) > MOVE_ARRIVAL_EPSILON) {
       const distanceToDestination = destinationX - engineer.x;
-      engineer.x += Math.sign(distanceToDestination) * Math.min(definition.moveSpeed * delta, Math.abs(distanceToDestination));
+      const distance = Math.min(definition.moveSpeed * delta, Math.abs(distanceToDestination));
+      engineer.x += Math.sign(distanceToDestination) * distance;
+      engineer.runDistance += distance;
       engineer.action = "moving";
       continue;
     }
