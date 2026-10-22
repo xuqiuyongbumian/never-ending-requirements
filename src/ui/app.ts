@@ -273,15 +273,19 @@ export class GameApp {
               <strong>${engineer.name}</strong>
               <span class="unit-card-bottom"><small class="role-state" data-role-state>${engineer.era ? `${ERAS[engineer.era].name}解锁` : `交付 ${engineer.workRate}/秒`}</small><b><span aria-hidden="true">◈</span> <span data-role-cost>${engineer.cost}</span></b></span>
             </button>`).join("")}
+            <button id="ship-it" class="unit-card action-card action-ship" aria-label="极限冲刺：持续 12 秒，效率提升 40%，技术债增加 25，冷却 45 秒" title="持续 12 秒，效率 +40%，技术债 +25，冷却 45 秒">
+              <span class="unit-card-top"><span class="unit-key action-key">R</span><span class="action-glyph" aria-hidden="true">✦</span></span>
+              <strong data-ship-it-label>极限冲刺</strong>
+              <span class="unit-card-bottom"><small class="role-state" data-ship-it-state>+40% · 技术债 +25</small><b class="action-tag">冲刺</b></span>
+            </button>
+            <button id="upgrade-era" class="unit-card action-card action-era" aria-label="升级技术时代">
+              <span class="unit-card-top"><span class="unit-key action-key">⇧</span><span class="action-glyph" aria-hidden="true">▲</span></span>
+              <strong data-era-button>升级时代</strong>
+              <span class="unit-card-bottom"><small class="role-state" data-era-cost>需要 80 经验</small><b class="action-tag">进化</b></span>
+            </button>
           </div>
           <div class="deck-footer">
             <span class="hint-copy">点需求卡优先调度 · R 冲刺 · 1–5 招聘</span>
-            <div class="deck-actions">
-              <button id="ship-it" class="ship-it-button" aria-label="极限冲刺：持续 12 秒，效率提升 40%，技术债增加 25，冷却 45 秒" title="持续 12 秒，效率 +40%，技术债 +25，冷却 45 秒">
-                <span data-ship-it-label>极限冲刺</span><small data-ship-it-state>+40% · 技术债 +25</small>
-              </button>
-              <button id="upgrade-era" class="era-button" aria-label="升级技术时代"><span data-era-button>升级时代</span><small data-era-cost>需要 80 经验</small></button>
-            </div>
           </div>
         </section>
 
