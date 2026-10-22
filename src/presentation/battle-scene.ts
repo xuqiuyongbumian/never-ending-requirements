@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import {
   advanceBattle,
+  BASE_FRONT_EDGE,
   getEngineerDefinition,
   getInterpolatedWorldX,
   prioritizeRequirement,
@@ -23,6 +24,7 @@ import {
 } from "./game-assets";
 import type { AudioEngine } from "../audio/audio-engine";
 import { panFromX } from "../audio/music-plan";
+import { layoutRequestCards, type RequestCardPosition } from "./request-card-layout";
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -32,8 +34,9 @@ const REQUEST_CARD_WIDTH = 224;
 const REQUEST_CARD_HEIGHT = 72;
 const BOSS_CARD_WIDTH = 320;
 const BOSS_CARD_HEIGHT = 100;
-const REQUEST_CARD_ROW_GAP = 68;
-const REQUEST_CARD_BASE_OFFSET = 230;
+const REQUEST_CARD_SAFE_TOP = 160;
+const REQUEST_CARD_SAFE_BOTTOM = 420;
+const REQUEST_CARD_ROW_GAP = 8;
 const REQUEST_MASCOT_LIFT = 28;
 const REQUEST_KIND_LABEL: Record<Requirement["kind"], string> = {
   feature: "功能",
@@ -104,11 +107,9 @@ interface RequestView {
   barHeight: number;
   isBoss: boolean;
   mascotScale: number;
-}
-
-interface RequestCardPosition {
-  x: number;
-  y: number;
+  lastRemainingWork: number;
+  lastImpactAt: number;
+  lastUrgent: boolean | null;
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -125,6 +126,11 @@ export class BattleScene extends Phaser.Scene {
   private presentRequestIds = new Set<number>();
   private priorityLinkActive = false;
   private audio: AudioEngine | null = null;
+  private overflowIndicator!: Phaser.GameObjects.Text;
+  private overflowRequestIds: number[] = [];
+  private requestCardSafeTop = REQUEST_CARD_SAFE_TOP;
+  private requestCardSafeBottom = REQUEST_CARD_SAFE_BOTTOM;
+  private lastSafeAreaCheckAt = Number.NEGATIVE_INFINITY;
 
   constructor() {
     super({ key: "battle", active: false });
@@ -156,6 +162,18 @@ export class BattleScene extends Phaser.Scene {
     this.presentEngineerIds.clear();
     this.presentRequestIds.clear();
     this.priorityLinkActive = false;
+    this.overflowRequestIds = [];
+    this.overflowIndicator = this.add.text(WIDTH / 2, REQUEST_CARD_SAFE_TOP - 15, "", {
+      fontFamily: "sans-serif", fontSize: "13px", fontStyle: "bold", color: "#f7edd9",
+      backgroundColor: "#24263e", stroke: "#141728", strokeThickness: 3, padding: { left: 10, right: 10, top: 5, bottom: 5 }, resolution: 2
+    }).setOrigin(0.5).setDepth(8).setVisible(false).setInteractive({ useHandCursor: true });
+    this.overflowIndicator.on("pointerdown", () => {
+      const request = this.state?.requests.find((candidate) => candidate.id === this.overflowRequestIds[0]);
+      if (!this.state || !request) return;
+      prioritizeRequirement(this.state, request.id);
+      const updateHud = this.game.registry.get("updateHud") as ((state: BattleState) => void) | undefined;
+      updateHud?.(this.state);
+    });
     this.registerEngineerAnimations();
     const era = this.state?.techEra ?? 0;
     const background = GAME_ASSETS.backgrounds[era] ?? GAME_ASSETS.backgrounds[0];
@@ -456,9 +474,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private syncRequests(state: BattleState): void {
+    if (this.time.now - this.lastSafeAreaCheckAt >= 250) {
+      this.lastSafeAreaCheckAt = this.time.now;
+      this.updateRequestCardSafeArea();
+    }
     const present = this.presentRequestIds;
     present.clear();
-    const cardPositions = this.getRequestCardPositions(state);
+    let layout = this.getRequestCardPositions(state);
+    if (layout.overflowIds.length > 0) layout = this.getRequestCardPositions(state, this.requestCardSafeTop + 32);
+    const { positions: cardPositions, overflowIds } = layout;
+    this.overflowRequestIds = overflowIds;
     for (const request of state.requests) {
       present.add(request.id);
       let view = this.requests.get(request.id);
@@ -470,7 +495,11 @@ export class BattleScene extends Phaser.Scene {
           gain: request.isFinal ? 1 : 0.75
         });
       }
-      this.updateRequestView(view, request, state, cardPositions.get(request.id) ?? { x: WIDTH / 2, y: FLOOR_Y - REQUEST_CARD_BASE_OFFSET });
+      const cardPosition = cardPositions.get(request.id);
+      const visibleCard = cardPosition !== undefined;
+      if (view.container.visible !== visibleCard) view.container.setVisible(visibleCard);
+      if (view.connector.visible !== visibleCard) view.connector.setVisible(visibleCard);
+      this.updateRequestView(view, request, state, cardPosition ?? { x: WIDTH / 2, y: REQUEST_CARD_SAFE_BOTTOM - view.cardHeight / 2 });
     }
     for (const [id, view] of this.requests) {
       if (present.has(id)) continue;
@@ -480,29 +509,48 @@ export class BattleScene extends Phaser.Scene {
       view.connector.destroy();
       this.requests.delete(id);
     }
+    const overflowRequest = state.requests.find((request) => request.id === overflowIds[0]);
+    const overflowText = overflowRequest ? `还有 ${overflowIds.length} 项 · 点击优先 ${overflowRequest.code}` : "";
+    if (this.overflowIndicator.text !== overflowText) this.overflowIndicator.setText(overflowText);
+    this.overflowIndicator.setPosition(WIDTH / 2, this.requestCardSafeTop + 16);
+    this.overflowIndicator.setVisible(overflowIds.length > 0);
   }
 
-  private getRequestCardPositions(state: BattleState): Map<number, RequestCardPosition> {
-    const rows: Array<Array<{ x: number; width: number }>> = [];
-    const positions = new Map<number, RequestCardPosition>();
+  private updateRequestCardSafeArea(): void {
+    const canvas = this.game.canvas;
+    const canvasRect = canvas.getBoundingClientRect();
+    if (canvasRect.height <= 0) return;
+    const header = document.querySelector<HTMLElement>(".battle-header")?.getBoundingClientRect();
+    const tutorial = document.querySelector<HTMLElement>(".tutorial-callout")?.getBoundingClientRect();
+    const notice = document.querySelector<HTMLElement>(".battle-notice.visible");
+    const noticeRect = notice && getComputedStyle(notice).display !== "none" ? notice.getBoundingClientRect() : null;
+    const deck = document.querySelector<HTMLElement>(".unit-deck")?.getBoundingClientRect();
+    const topPixel = Math.max(header?.bottom ?? canvasRect.top, tutorial?.bottom ?? canvasRect.top, noticeRect?.bottom ?? canvasRect.top);
+    const pixelsToWorld = HEIGHT / canvasRect.height;
+    this.requestCardSafeTop = Math.min(FLOOR_Y - BOSS_CARD_HEIGHT - 8, Math.max(REQUEST_CARD_SAFE_TOP, Math.ceil((topPixel - canvasRect.top + 8) * pixelsToWorld)));
+    const bottomPixel = (deck?.top ?? canvasRect.bottom) - canvasRect.top - 8;
+    this.requestCardSafeBottom = Math.min(REQUEST_CARD_SAFE_BOTTOM, Math.floor(bottomPixel * pixelsToWorld));
+  }
+
+  private getRequestCardPositions(state: BattleState, safeTop = this.requestCardSafeTop): ReturnType<typeof layoutRequestCards> {
     const requests = state.requests.map((request) => {
       const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
-      const unitX = worldX / WORLD_WIDTH * WIDTH;
-      const width = request.isBoss ? BOSS_CARD_WIDTH : REQUEST_CARD_WIDTH;
-      return { request, width, x: Math.max(width / 2 + 12, Math.min(WIDTH - width / 2 - 12, unitX)) };
-    }).sort((a, b) => a.x - b.x || a.request.id - b.request.id);
-
-    for (const { request, x, width } of requests) {
-      let row = rows.findIndex((claimed) => claimed.every((claimedItem) => Math.abs(claimedItem.x - x) >= (claimedItem.width + width) / 2 + 16));
-      if (row < 0) row = rows.length;
-      rows[row] ??= [];
-      rows[row].push({ x, width });
-      positions.set(request.id, {
-        x,
-        y: FLOOR_Y - REQUEST_CARD_BASE_OFFSET - row * REQUEST_CARD_ROW_GAP
-      });
-    }
-    return positions;
+      return {
+        id: request.id,
+        anchorX: worldX / WORLD_WIDTH * WIDTH,
+        width: request.isBoss ? BOSS_CARD_WIDTH : REQUEST_CARD_WIDTH,
+        height: request.isBoss ? BOSS_CARD_HEIGHT : REQUEST_CARD_HEIGHT,
+        isBoss: request.isBoss === true,
+        prioritized: state.prioritizedRequestId === request.id
+      };
+    });
+    return layoutRequestCards(requests, {
+      viewportWidth: WIDTH,
+      safeTop,
+      safeBottom: this.requestCardSafeBottom,
+      horizontalGap: 12,
+      verticalGap: REQUEST_CARD_ROW_GAP
+    });
   }
 
   private createRequestView(request: Requirement): RequestView {
@@ -563,7 +611,10 @@ export class BattleScene extends Phaser.Scene {
       cardHeight,
       barHeight,
       isBoss,
-      mascotScale
+      mascotScale,
+      lastRemainingWork: request.remainingWork,
+      lastImpactAt: Number.NEGATIVE_INFINITY,
+      lastUrgent: null
     };
     this.drawRequestPlate(view, request.isFinal, false);
     return view;
@@ -573,7 +624,16 @@ export class BattleScene extends Phaser.Scene {
     const worldX = getInterpolatedWorldX(state, "request", request.id) ?? request.x;
     const unitX = worldX / WORLD_WIDTH * WIDTH;
     const prioritized = state.prioritizedRequestId === request.id;
-    const mascotY = FLOOR_Y - REQUEST_MASCOT_LIFT;
+    const beingWorked = state.engineers.some((engineer) => engineer.targetRequestId === request.id && engineer.action === "working");
+    const mascotY = FLOOR_Y - REQUEST_MASCOT_LIFT + Math.sin(state.elapsed * (beingWorked ? 7 : 3) + request.id) * (beingWorked ? 2.8 : 1.4);
+    if (request.remainingWork < view.lastRemainingWork - 0.01 && state.elapsed - view.lastImpactAt >= 0.28) {
+      view.lastImpactAt = state.elapsed;
+      this.tweens.killTweensOf(view.mascot);
+      view.mascot.setScale(view.mascotScale);
+      const hitScale = view.isBoss ? 1.12 : 1.07;
+      this.tweens.add({ targets: view.mascot, scaleX: view.mascotScale * hitScale, scaleY: view.mascotScale / hitScale, duration: view.isBoss ? 125 : 95, yoyo: true, ease: "Sine.Out" });
+    }
+    view.lastRemainingWork = request.remainingWork;
     if (view.mascot.x !== unitX) view.mascot.setX(unitX);
     if (view.mascot.y !== mascotY) view.mascot.setY(mascotY);
     if (view.cardX !== cardPosition.x || view.cardY !== cardPosition.y) {
@@ -607,9 +667,13 @@ export class BattleScene extends Phaser.Scene {
       view.lastRemainingText = remainingText;
       view.remaining.setText(remainingText);
     }
-    if (view.lastPrioritized !== prioritized) {
+    const eta = Math.max(0, request.x - BASE_FRONT_EDGE) / Math.max(1, request.speed * (beingWorked ? 0.55 : 1));
+    const urgent = eta <= 10;
+    if (view.lastPrioritized !== prioritized || view.lastUrgent !== urgent) {
       view.lastPrioritized = prioritized;
-      this.drawRequestPlate(view, request.isFinal, prioritized);
+      view.lastUrgent = urgent;
+      view.remaining.setColor(urgent ? "#ff7887" : "#f7edd9");
+      this.drawRequestPlate(view, request.isFinal, prioritized, urgent);
     }
     const progressWidth = Math.max(0, Math.round((view.cardWidth - 32) * (1 - request.remainingWork / request.totalWork) * 100) / 100);
     if (view.progressWidth !== progressWidth) {
@@ -618,21 +682,22 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean): void {
+  private drawRequestPlate(view: RequestView, isFinal: boolean, prioritized: boolean, urgent = false): void {
     const { plate, accent } = view;
     const width = view.cardWidth;
     const height = view.cardHeight;
     const halfWidth = width / 2;
     const halfHeight = height / 2;
     plate.clear();
-    if (isFinal || view.isBoss) {
+    if (isFinal || view.isBoss || urgent) {
       plate.fillStyle(view.isBoss ? 0xff5a4d : 0xffd27d, view.isBoss ? 0.16 : 0.1)
         .fillRoundedRect(-halfWidth - 4, -halfHeight - 4, width + 8, height + 8, 11);
     }
     plate.fillStyle(0x191c31, view.isBoss ? 0.95 : 0.86).fillRoundedRect(-halfWidth, -halfHeight, width, height, 9);
     plate.fillStyle(0x282b43, view.isBoss ? 0.98 : 0.91).fillRoundedRect(-halfWidth + 1, -halfHeight + 1, width - 2, height - 2, 8);
-    plate.fillStyle(accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
-    plate.lineStyle(prioritized || isFinal || view.isBoss ? 2 : 1, prioritized ? 0xffc875 : accent, prioritized || isFinal || view.isBoss ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
+    plate.fillStyle(urgent ? 0xff6b83 : accent).fillRoundedRect(-halfWidth, -halfHeight, width, 5, 3);
+    const border = urgent ? 0xff6b83 : prioritized ? 0xffc875 : accent;
+    plate.lineStyle(prioritized || isFinal || view.isBoss || urgent ? 2 : 1, border, prioritized || isFinal || view.isBoss || urgent ? 0.9 : 0.6).strokeRoundedRect(-halfWidth, -halfHeight, width, height, 9);
     plate.fillStyle(0x555a73).fillRoundedRect(-halfWidth + 12, halfHeight - 13, width - 24, view.barHeight + 1, 4);
   }
 

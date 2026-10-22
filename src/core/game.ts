@@ -986,7 +986,7 @@ function completeRequirement(state: BattleState, request: Requirement): void {
     addTechDebt(state, -6, "测试工程师完成回归");
   }
   setNotice(state, `${request.code} 已验收　+${request.budgetReward} 预算 · +${request.experienceReward} 经验`);
-  emitTelemetry(state, "request_complete", { request: request.code, budget: request.budgetReward, experience: request.experienceReward, final: request.isFinal });
+  emitTelemetry(state, "request_complete", { request: request.code, budget: request.budgetReward, experience: request.experienceReward, final: request.isFinal, boss: request.isBoss === true });
   if (request.isFinal) endBattle(state, "victory", "最终需求按时交付，项目成功上线");
 }
 
