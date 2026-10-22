@@ -445,3 +445,137 @@ button:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2p
   .menu-community { align-items: stretch; flex-direction: column; }
   .menu-community-actions { justify-content: space-between; }
 }
+
+/* V14: keep the menu game-first and give both screens room to breathe. */
+.menu-screen {
+  align-items: stretch;
+  justify-content: center;
+  padding: clamp(24px, 4.2vw, 64px) clamp(24px, 5.2vw, 100px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    linear-gradient(90deg, rgb(21 23 40 / 88%) 0%, rgb(25 28 49 / 78%) 43%, rgb(25 28 49 / 40%) 73%, rgb(25 28 49 / 15%) 100%),
+    linear-gradient(0deg, rgb(23 26 44 / 45%), transparent 62%),
+    var(--studio-background) center / cover;
+}
+.menu-grid { background-size: 56px 56px; mask-image: linear-gradient(90deg, #000 0%, #000 28%, transparent 72%); }
+.menu-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(380px, .92fr);
+  align-items: center;
+  gap: clamp(28px, 5vw, 76px);
+  width: min(100%, 1320px);
+  margin: auto;
+  padding: 30px 0;
+}
+.menu-hero, .menu-side { min-width: 0; }
+.menu-side { display: grid; align-content: center; gap: 11px; }
+.menu-content h1 { margin-top: 14px; font-size: clamp(56px, 6vw, 82px); text-shadow: 0 5px 24px rgb(255 189 115 / 14%); }
+.menu-subtitle { max-width: 590px; margin: 12px 0 22px; font-size: 15px; }
+.menu-roster { display: flex; align-items: center; gap: 13px; margin: 0 0 16px; color: var(--text-primary); }
+.menu-roster-portraits { display: flex; flex: 0 0 auto; padding-left: 8px; }
+.menu-roster-portraits img { width: 44px; height: 48px; margin-left: -8px; object-fit: contain; filter: drop-shadow(0 3px 5px rgb(8 11 24 / 46%)); }
+.menu-roster > span { display: grid; gap: 3px; }
+.menu-roster strong { font-size: 13px; }
+.menu-roster small { color: var(--text-secondary); font-size: 12px; }
+.mission-card { padding: 20px 22px; border-color: rgb(230 209 175 / 22%); background: linear-gradient(145deg, rgb(36 38 62 / 92%), rgb(26 29 49 / 94%)); box-shadow: 0 18px 42px rgb(8 11 24 / 34%), inset 0 1px rgb(255 255 255 / 5%); backdrop-filter: blur(6px); }
+.mission-topline { font-size: 12px; }
+.mission-tag { font-size: 11px; }
+.mission-card h2 { font-size: 21px; }
+.mission-card p { font-size: 14px; }
+.mission-objective { margin: 13px 0 16px; font-size: 13px; }
+.primary-button { min-height: 50px; font-size: 14px; }
+.menu-achievements { margin-top: 0; padding: 13px 14px; background: linear-gradient(160deg, rgb(36 38 62 / 85%), rgb(25 28 49 / 88%)); }
+.menu-achievements-title strong { font-size: 16px; }
+.menu-achievements-kicker { font-size: 11px; }
+.menu-achievements-stats span { font-size: 11px; }
+.menu-achievements-stats b { font-size: 15px; }
+.menu-achievement-grid { gap: 7px; margin-top: 9px; }
+.menu-achievement { min-height: 76px; padding: 9px; }
+.menu-achievement-copy strong { font-size: 13px; }
+.menu-achievement-copy p { font-size: 11px; }
+.menu-achievement-points { font-size: 11px; }
+.menu-achievements-empty { font-size: 12px; }
+.era-preview { margin-top: 0; padding: 12px 13px; background: rgb(25 28 49 / 76%); }
+.era-preview strong { font-size: 13px; }
+.era-preview small { font-size: 12px; }
+.era-step { font-size: 11px; }
+.menu-community { align-items: center; gap: 9px; margin-top: 0; padding: 10px 12px; background: rgb(25 28 49 / 68%); }
+.nickname-field > span { font-size: 12px; }
+.nickname-field > span small { font-size: 11px; }
+.nickname-field input { height: 38px; font-size: 13px; }
+.menu-ghost-button { font-size: 11px; }
+.menu-best { font-size: 11px; }
+.menu-best b { font-size: 12px; }
+.menu-footnote { margin-top: 0; font-size: 11px; }
+.menu-home-fullscreen { position: absolute; top: 18px; right: 18px; z-index: 2; display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid rgb(247 237 217 / 26%); border-radius: 11px; color: var(--text-primary); background: rgb(25 28 49 / 76%); cursor: pointer; font-size: 21px; transition: border-color 140ms ease, color 140ms ease, background 140ms ease; }
+.menu-home-fullscreen:hover { border-color: var(--accent-gold); color: var(--accent-gold); background: rgb(25 28 49 / 94%); }
+
+#stage.is-battle-mode { background: var(--game-bg); }
+.battle-ui::before { background: linear-gradient(180deg, rgb(19 22 39 / 32%) 0%, transparent 20%, transparent 68%, rgb(19 22 39 / 38%) 100%); }
+.battle-header { width: min(1580px, calc(100% - 32px)); background: rgb(25 28 49 / 82%); box-shadow: 0 12px 32px rgb(8 11 24 / 25%), inset 0 1px rgb(255 255 255 / 5%); backdrop-filter: blur(8px); }
+.metric-pill small, .status-copy { font-size: 12px; }
+.metric-pill strong { font-size: 17px; }
+.project-status { background: rgb(255 255 255 / 3%); }
+.battle-notice { font-size: 12px; }
+.unit-deck { width: min(1380px, calc(100% - 34px)); background: linear-gradient(145deg, rgb(36 38 62 / 92%), rgb(25 28 49 / 92%)); box-shadow: 0 14px 36px rgb(8 11 24 / 30%), inset 0 1px rgb(255 255 255 / 5%); backdrop-filter: blur(8px); }
+.deck-status { font-size: 12px; }
+.debt-warning { font-size: 11px; }
+.ship-it-button small, .era-button small { font-size: 12px; }
+
+@media (max-width: 980px) {
+  .menu-screen { padding: 58px 20px 24px; }
+  .menu-content { grid-template-columns: minmax(0, 1fr); gap: 16px; width: min(100%, 720px); padding: 0; }
+  .menu-content h1 { font-size: clamp(48px, 8vw, 68px); }
+  .menu-subtitle { margin-bottom: 16px; }
+  .menu-side { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .menu-achievements { grid-column: 1 / -1; }
+  .menu-achievement-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .menu-achievement { min-height: 82px; }
+  .menu-community { align-items: center; }
+  .menu-footnote { grid-column: 1 / -1; }
+  .battle-header { backdrop-filter: blur(5px); }
+  .unit-deck { backdrop-filter: blur(5px); }
+}
+@media (max-width: 600px) {
+  .menu-screen { padding: 58px 14px 20px; }
+  .menu-content { gap: 13px; }
+  .menu-content h1 { font-size: clamp(42px, 12vw, 58px); }
+  .menu-subtitle { font-size: 13px; }
+  .menu-roster { gap: 8px; }
+  .menu-roster-portraits img { width: 36px; height: 40px; }
+  .menu-roster small { font-size: 11px; }
+  .mission-card { padding: 15px; }
+  .mission-card h2 { font-size: 18px; }
+  .mission-card p { font-size: 13px; }
+  .menu-side { grid-template-columns: minmax(0, 1fr); }
+  .menu-achievements, .menu-footnote { grid-column: 1; }
+  .menu-achievement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .menu-community { align-items: stretch; }
+  .menu-home-fullscreen { top: 10px; right: 10px; width: 38px; height: 38px; }
+}
+@media (max-width: 720px) {
+  .menu-side { grid-template-columns: minmax(0, 1fr); }
+  .menu-achievements, .menu-footnote { grid-column: 1; }
+}
+@media (max-aspect-ratio: 1 / 1) {
+  .battle-ui { top: 0; left: 0; width: 100vw; height: 100dvh; }
+}
+@media (min-width: 2200px) {
+  .menu-content { width: min(100%, 1560px); gap: 90px; }
+  .menu-content h1 { font-size: clamp(82px, 4vw, 100px); }
+  .menu-subtitle { font-size: 16px; }
+  .mission-card { padding: 24px 26px; }
+}
+@media (max-height: 760px) and (min-width: 981px) {
+  .menu-screen { padding-block: 18px; }
+  .menu-content { gap: 34px; padding-block: 18px; }
+  .menu-content h1 { margin-top: 8px; font-size: clamp(50px, 5.6vw, 72px); }
+  .menu-subtitle { margin-block: 8px 14px; }
+  .menu-roster { margin-bottom: 10px; }
+  .mission-card { padding: 15px 18px; }
+  .mission-card h2 { margin-top: 10px; }
+  .mission-objective { margin-block: 10px 12px; }
+  .menu-achievement { min-height: 68px; }
+  .menu-achievement-grid { margin-top: 7px; }
+}
