@@ -812,6 +812,11 @@ function updateEngineers(state: BattleState, delta: number): void {
     const workstationX = getWorkstationXForSlot(state, engineer, request, slot);
     if (getDispatchWaitSeconds(engineer, request, workstationX) > SIMULATION_STEP * 2) {
       const homeX = getEngineerHomeX(engineer);
+      // Keep deployed staff forward; retreating here makes them reverse again once the request reaches intercept range.
+      if (engineer.x > homeX + MOVE_RESUME_EPSILON) {
+        engineer.action = "idle";
+        continue;
+      }
       const homeGap = Math.abs(engineer.x - homeX);
       const shouldReturn = engineer.action === "moving"
         ? homeGap > MOVE_ARRIVAL_EPSILON
